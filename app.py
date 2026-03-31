@@ -1,7 +1,11 @@
 """
 Splice Report Generator — Streamlit App
 ========================================
-Generate splice QC reports from OTDR SOR files (bidirectional only, no uni).
+EXFO-match splice QC report from OTDR SOR files.
+
+Two-pass analysis:
+  Pass 1 — standard bidirectional splice analysis at known splice positions
+  Pass 2 — B-direction event scan to catch events the A-direction missed
 
 Launch:  streamlit run app.py
 """
@@ -17,8 +21,9 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from splice_report_generator import (
-    load_all, discover_splices, analyze_all, build_ribbon_data, write_xlsx,
+from splicereportmatchexfo import (
+    load_all, discover_splices, analyze_all, scan_b_events,
+    build_ribbon_data, write_xlsx,
     REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
 )
 
@@ -83,13 +88,12 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Splice Report Generator")
-st.caption("Bidirectional splice QC report from OTDR SOR files — with B-direction fill past breaks")
+st.caption("EXFO-match bidirectional splice QC — Pass 1: splice positions · Pass 2: B-direction event scan")
 
 
 # ── Password protection ──────────────────────────────────────────────────────
 
 def check_password():
-    """Return True if user entered the correct password."""
     if "authenticated" not in st.session_state:
         st.session_state.authenticated = False
     if st.session_state.authenticated:
@@ -235,7 +239,6 @@ def stage_files(uploaded, prefix="sor_"):
 
 
 def stage_zip(uploaded_zip, prefix="sor_zip_"):
-    """Extract SOR files from a ZIP to a temp directory. Return directory path."""
     import zipfile
     tmpdir = tempfile.mkdtemp(prefix=prefix)
     with zipfile.ZipFile(io.BytesIO(uploaded_zip.getbuffer()), 'r') as zf:
@@ -253,7 +256,7 @@ def stage_zip(uploaded_zip, prefix="sor_zip_"):
 # ── Run ──────────────────────────────────────────────────────────────────────
 
 if run_button and has_a:
-    # Get directories
+    # Stage files
     if folder_a and os.path.isdir(folder_a):
         dir_a = folder_a
         dir_b = folder_b if (folder_b and os.path.isdir(folder_b)) else None
@@ -273,17 +276,18 @@ if run_button and has_a:
         progress.empty()
 
     analysis_bar = st.progress(0.0, text="Loading SOR files...")
-
     log_buf = io.StringIO()
+
+    # Load
     with redirect_stdout(log_buf):
         fibers_a, fibers_b = load_all(dir_a, dir_b)
-
     n_fibers = max(fibers_a.keys()) if fibers_a else 0
-    analysis_bar.progress(0.2, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
+    analysis_bar.progress(0.15, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
 
+    # Discover splices
     with redirect_stdout(log_buf):
         splices = discover_splices(fibers_a)
-    analysis_bar.progress(0.4, text=f"Found {len(splices)} splice closures...")
+    analysis_bar.progress(0.30, text=f"Found {len(splices)} splice closures...")
 
     # Auto-detect span
     actual_span = span_km
@@ -293,24 +297,40 @@ if run_button and has_a:
         if all_ends:
             top_quarter = all_ends[int(len(all_ends) * 0.75):]
             actual_span = round(np.median(top_quarter), 2)
-        else:
-            actual_span = 0
 
-    analysis_bar.progress(0.5, text=f"Analyzing {n_fibers} fibers at {len(splices)} splices...")
+    # Pass 1 — standard bidirectional analysis at splice positions
+    analysis_bar.progress(0.45, text=f"Pass 1: analyzing {n_fibers} fibers at {len(splices)} splice positions...")
     with redirect_stdout(log_buf):
         results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
-    n_flagged = len(results)
-    n_breaks = sum(1 for r in results.values() if r['is_break'])
-    n_broke = sum(1 for r in results.values() if r['is_broke'])
-    n_bfill = sum(1 for r in results.values() if r.get('is_bfill', False))
-    n_reburn = n_flagged - n_breaks - n_broke - n_bfill
-
-    analysis_bar.progress(0.7, text="Building ribbon grid...")
+    # Pass 2 — B-direction event scan for events missed by Pass 1
+    analysis_bar.progress(0.65, text="Pass 2: scanning B-direction for missed events...")
     with redirect_stdout(log_buf):
-        cells = build_ribbon_data(results, n_fibers, ribbon_size, len(splices))
+        b_results = scan_b_events(fibers_a, fibers_b, splices, threshold, results, actual_span)
 
-    analysis_bar.progress(0.85, text="Writing Excel report...")
+    # Merge — Pass 1 takes priority
+    all_results = {**results, **b_results}
+
+    # Count event types
+    n_reburn = sum(1 for r in all_results.values()
+                   if r.get('event_source') == 'bidir' and not r['is_break'])
+    n_breaks  = sum(1 for r in all_results.values() if r['is_break'])
+    n_broke   = sum(1 for r in all_results.values() if r['is_broke'])
+    n_bfill   = sum(1 for r in all_results.values() if r.get('is_bfill', False))
+    n_a_only  = sum(1 for r in all_results.values() if r.get('is_a_only', False))
+    n_b_only  = sum(1 for r in all_results.values() if r.get('is_b_only', False))
+    n_b_only_high = sum(1 for r in all_results.values()
+                        if r.get('is_b_only') and r.get('est_bidir_flagged'))
+    n_a_only_high = sum(1 for r in all_results.values()
+                        if r.get('is_a_only') and r.get('est_bidir_flagged'))
+    n_flagged = len(all_results)
+
+    # Build grid and write Excel
+    analysis_bar.progress(0.80, text="Building ribbon grid...")
+    with redirect_stdout(log_buf):
+        cells = build_ribbon_data(all_results, n_fibers, ribbon_size, len(splices))
+
+    analysis_bar.progress(0.92, text="Writing Excel report...")
     xlsx_tmpdir = tempfile.mkdtemp(prefix="splice_xlsx_")
     xlsx_path = os.path.join(xlsx_tmpdir, "splice_report.xlsx")
     with redirect_stdout(log_buf):
@@ -321,19 +341,35 @@ if run_button and has_a:
         st.session_state.xlsx_bytes = f.read()
     st.session_state.xlsx_name = f"splice_report_{site_a}_{site_b}.xlsx"
 
-    summary = [
+    # Build summary
+    summary_lines = [
         f"**Fibers:** {n_fibers}",
         f"**Splice closures:** {len(splices)}",
-        f"**Span:** {actual_span} km",
+        f"**Span:** {actual_span} km  ({actual_span * 3280.84:,.0f} ft)",
         f"**Threshold:** {threshold:.3f} dB",
         "",
-        f"**Flagged events:** {n_flagged}",
-        f"  - Breaks: {n_breaks} — OTDR detected 1F reflective event (clean cut, glass-to-air Fresnel reflection)",
-        f"  - Broke: {n_broke} — fiber trace terminates mid-span with no reflection (crush, stress fracture)",
-        f"  - B-fill: {n_bfill} — B-direction loss used past a break where A-direction is blind",
-        f"  - Reburns: {n_reburn} — bidirectional splice loss >= {threshold:.3f} dB, needs re-splice",
+        f"**Total flagged events:** {n_flagged}",
+        "",
+        "**Pass 1 — Splice positions (A+B bidirectional):**",
+        f"  - Reburns: {n_reburn} — bidirectional splice loss >= {threshold:.3f} dB, needs re-splice  *(pink)*",
+        f"  - Breaks: {n_breaks} — OTDR detected 1F reflective event (clean cut, glass-to-air Fresnel reflection)  *(red)*",
+        f"  - Broke: {n_broke} — fiber trace terminates mid-span with no reflection (crush, stress fracture)  *(orange)*",
+        f"  - B-fill: {n_bfill} — B-direction loss used past a break where A-direction is blind  *(blue)*",
+        f"  - A-only: {n_a_only} — A-direction saw it, no matching B entry found; "
+        f"{n_a_only_high} have estimated bidir >= threshold  *(yellow/gold)*",
+        "",
+        "**Pass 2 — B-direction event scan (EXFO-match):**",
+        f"  - B-only: {n_b_only} — B-direction saw it, A-direction had no entry; "
+        f"{n_b_only_high} have estimated bidir >= threshold  *(lavender/purple)*",
+        "",
+        "**Cell label guide:**",
+        "  - `325 .172` — A+B confirmed bidirectional",
+        "  - `325 .285(A) ~.143bd` — A-only, estimated bidir below threshold",
+        "  - `325 .285(A) ⚠.143bd` — A-only, estimated bidir still above threshold",
+        "  - `325 .340(B) ⚠.170bd` — B-only, estimated bidir still above threshold",
+        "  - `107 broke` — fiber terminates mid-span",
     ]
-    st.session_state.summary = "\n\n".join(summary)
+    st.session_state.summary = "\n\n".join(summary_lines)
     st.session_state.log_output = log_buf.getvalue()
     st.session_state.done = True
 
@@ -372,10 +408,25 @@ else:
     3. Click **Generate Report**
     4. Download the Excel splice QC report
 
-    **Report contents:**
-    - One row per 12-fiber ribbon, one column per splice closure
-    - Distance headers in km and feet from both directions (A→B and B→A)
-    - Bidirectional splice loss for flagged fibers
-    - Breaks (Fresnel reflection), broke fibers, reburn candidates
-    - B-direction fill past breaks (blue cells) using same thresholds
+    **Two-pass analysis (EXFO-match):**
+
+    **Pass 1** — Standard bidirectional splice analysis at known splice closure positions:
+    - Finds A+B confirmed bidirectional events, flags if loss >= threshold
+    - Flags A-only events (A saw it, B event table had no entry)
+    - Detects broke fibers and fills B-direction data past breaks
+
+    **Pass 2** — Scans all B-direction events not caught in Pass 1:
+    - Converts B-frame positions to A-frame and matches to nearest splice
+    - If A event also found: computes bidirectional average
+    - If no A event: flags as B-only with estimated bidir = B / 2
+
+    **Cell colors:**
+    - 🟥 **Pink** — A+B reburn (bidir >= threshold)
+    - 🔴 **Red** — Break (1F reflective)
+    - 🟠 **Orange** — Broke (mid-span termination)
+    - 🔵 **Blue** — B-fill (past a break)
+    - 🟡 **Yellow/Gold** — A-only (A saw it, B did not; gold = est bidir still high)
+    - 🟣 **Lavender/Purple** — B-only (B saw it, A did not; purple = est bidir still high)
+
+    See the **Legend** sheet in the downloaded Excel for full details.
     """)
