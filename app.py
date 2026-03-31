@@ -25,7 +25,7 @@ from splice_report_generator import (
 # ── Page config ──────────────────────────────────────────────────────────────
 
 st.set_page_config(
-    page_title="ZERO dB — Splice Report Generator",
+    page_title="Splice Report Generator",
     page_icon="📋",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -83,7 +83,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("Splice Report Generator")
-st.caption("Bidirectional splice QC report from OTDR SOR files (no unidirectional)")
+st.caption("Bidirectional splice QC report from OTDR SOR files — with B-direction fill past breaks")
 
 
 # ── Password protection ──────────────────────────────────────────────────────
@@ -258,54 +258,59 @@ if run_button and has_a:
         dir_a = folder_a
         dir_b = folder_b if (folder_b and os.path.isdir(folder_b)) else None
     elif zip_a:
-        progress = st.progress(0, text="Extracting A-direction ZIP...")
+        progress = st.progress(0.0, text="Extracting A-direction ZIP...")
         dir_a = stage_zip(zip_a, "splice_a_")
-        progress.progress(40, text="Extracting B-direction ZIP...")
+        progress.progress(0.4, text="Extracting B-direction ZIP...")
         dir_b = stage_zip(zip_b, "splice_b_") if zip_b else None
-        progress.progress(50, text="Files extracted.")
+        progress.progress(0.5, text="Files extracted.")
         progress.empty()
     else:
-        progress = st.progress(0, text="Staging A-direction files...")
+        progress = st.progress(0.0, text="Staging A-direction files...")
         dir_a = stage_files(uploaded_a, "splice_a_")
-        progress.progress(40, text="Staging B-direction files...")
+        progress.progress(0.4, text="Staging B-direction files...")
         dir_b = stage_files(uploaded_b, "splice_b_") if uploaded_b else None
-        progress.progress(50, text="Files staged.")
+        progress.progress(0.5, text="Files staged.")
         progress.empty()
 
-    analysis_bar = st.progress(0, text="Loading SOR files...")
+    analysis_bar = st.progress(0.0, text="Loading SOR files...")
 
     log_buf = io.StringIO()
     with redirect_stdout(log_buf):
         fibers_a, fibers_b = load_all(dir_a, dir_b)
 
     n_fibers = max(fibers_a.keys()) if fibers_a else 0
-    analysis_bar.progress(20, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
+    analysis_bar.progress(0.2, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
 
     with redirect_stdout(log_buf):
         splices = discover_splices(fibers_a)
-    analysis_bar.progress(40, text=f"Found {len(splices)} splice closures...")
+    analysis_bar.progress(0.4, text=f"Found {len(splices)} splice closures...")
 
     # Auto-detect span
     actual_span = span_km
     if actual_span == 0:
-        ends = [e['dist_km'] for r in fibers_a.values()
-                for e in r['events'] if e['is_end'] and e['dist_km'] > 90]
-        actual_span = round(np.median(ends), 2) if ends else 97.33
+        all_ends = sorted([e['dist_km'] for r in fibers_a.values()
+                           for e in r['events'] if e['is_end']])
+        if all_ends:
+            top_quarter = all_ends[int(len(all_ends) * 0.75):]
+            actual_span = round(np.median(top_quarter), 2)
+        else:
+            actual_span = 0
 
-    analysis_bar.progress(50, text=f"Analyzing {n_fibers} fibers at {len(splices)} splices...")
+    analysis_bar.progress(0.5, text=f"Analyzing {n_fibers} fibers at {len(splices)} splices...")
     with redirect_stdout(log_buf):
         results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
     n_flagged = len(results)
     n_breaks = sum(1 for r in results.values() if r['is_break'])
     n_broke = sum(1 for r in results.values() if r['is_broke'])
-    n_reburn = n_flagged - n_breaks - n_broke
+    n_bfill = sum(1 for r in results.values() if r.get('is_bfill', False))
+    n_reburn = n_flagged - n_breaks - n_broke - n_bfill
 
-    analysis_bar.progress(70, text="Building ribbon grid...")
+    analysis_bar.progress(0.7, text="Building ribbon grid...")
     with redirect_stdout(log_buf):
         cells = build_ribbon_data(results, n_fibers, ribbon_size, len(splices))
 
-    analysis_bar.progress(85, text="Writing Excel report...")
+    analysis_bar.progress(0.85, text="Writing Excel report...")
     xlsx_tmpdir = tempfile.mkdtemp(prefix="splice_xlsx_")
     xlsx_path = os.path.join(xlsx_tmpdir, "splice_report.xlsx")
     with redirect_stdout(log_buf):
@@ -325,13 +330,14 @@ if run_button and has_a:
         f"**Flagged events:** {n_flagged}",
         f"  - Breaks: {n_breaks}",
         f"  - Broke: {n_broke}",
+        f"  - B-fill: {n_bfill}",
         f"  - Reburns: {n_reburn}",
     ]
     st.session_state.summary = "\n\n".join(summary)
     st.session_state.log_output = log_buf.getvalue()
     st.session_state.done = True
 
-    analysis_bar.progress(100, text="Done!")
+    analysis_bar.progress(1.0, text="Done!")
     analysis_bar.empty()
 
 
@@ -368,7 +374,8 @@ else:
 
     **Report contents:**
     - One row per 12-fiber ribbon, one column per splice closure
+    - Distance headers in km and feet from both directions (A→B and B→A)
     - Bidirectional splice loss for flagged fibers
     - Breaks (Fresnel reflection), broke fibers, reburn candidates
-    - No unidirectional entries
+    - B-direction fill past breaks (blue cells) using same thresholds
     """)

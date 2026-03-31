@@ -142,14 +142,26 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
         end = [e for e in r['events'] if e['is_end']]
         eof_a[fnum] = end[0]['dist_km'] if end else 999
 
-    total_span_a = np.median([v for v in eof_a.values() if v > 90]) if eof_a else 97.33
+    # Auto-detect span length: use the top 25% of EOL distances (full-span fibers)
+    # This works regardless of route length — no hardcoded minimum.
+    eof_a_vals = sorted(eof_a.values())
+    if eof_a_vals:
+        top_quarter_a = eof_a_vals[int(len(eof_a_vals) * 0.75):]
+        total_span_a = np.median(top_quarter_a)
+    else:
+        total_span_a = 0
 
     eof_b = {}
     for fnum, r in fibers_b.items():
         end = [e for e in r['events'] if e['is_end']]
         eof_b[fnum] = end[0]['dist_km'] if end else 999
 
-    total_span_b = np.median([v for v in eof_b.values() if v > 90]) if eof_b else 97.33
+    eof_b_vals = sorted([v for v in eof_b.values() if v < 999])
+    if eof_b_vals:
+        top_quarter_b = eof_b_vals[int(len(eof_b_vals) * 0.75):]
+        total_span_b = np.median(top_quarter_b)
+    else:
+        total_span_b = 0
 
     for fnum, r in fibers_a.items():
         # Get B data
@@ -192,10 +204,42 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                         'bidir_dist': fiber_end,
                         'is_break': False,
                         'is_broke': True,
+                        'is_bfill': False,
                         'is_flagged': True,
                         'event_type': 'BROKE',
                         'label': f"{fnum} broke",
                     }
+                # For splices PAST the break, use B-direction fill
+                elif sp_km > fiber_end and rb and b_span:
+                    # Find B event near this splice position
+                    b_evt = None
+                    for e in rb['events']:
+                        if e['dist_km'] < 1.0 or e['is_end']:
+                            continue
+                        ef_from_a = b_span - e['dist_km']
+                        if abs(ef_from_a - sp_km) < POSITION_TOL:
+                            if b_evt is None or abs(ef_from_a - sp_km) < abs((b_span - b_evt['dist_km']) - sp_km):
+                                b_evt = e
+                    if b_evt is not None:
+                        b_loss_val = abs(b_evt['splice_loss'])
+                        if b_loss_val >= threshold:
+                            loss_str = f"{b_loss_val:.3f}"
+                            if loss_str.startswith('0.'):
+                                loss_str = loss_str[1:]
+                            results[(fnum, si)] = {
+                                'fiber': fnum,
+                                'splice_idx': si,
+                                'bidir_loss': b_loss_val,
+                                'a_loss': None,
+                                'b_loss': b_evt['splice_loss'],
+                                'bidir_dist': b_span - b_evt['dist_km'],
+                                'is_break': False,
+                                'is_broke': False,
+                                'is_bfill': True,
+                                'is_flagged': True,
+                                'event_type': b_evt['type'],
+                                'label': f"{fnum} {loss_str} (B)",
+                            }
                 continue
 
             # Find A event near this splice
@@ -259,6 +303,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                 'bidir_dist': bidir_dist,
                 'is_break': is_break,
                 'is_broke': False,
+                'is_bfill': False,
                 'is_flagged': True,
                 'event_type': ea['type'],
                 'label': label,
@@ -309,6 +354,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices):
                     'loss': res['bidir_loss'],
                     'is_break': res['is_break'],
                     'is_broke': res['is_broke'],
+                    'is_bfill': res.get('is_bfill', False),
                     'label': res['label'],
                     'res': res,
                 })
@@ -331,12 +377,14 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices):
         cell_text = ' '.join(parts)
         is_break = any(g['is_break'] for g in groups)
         is_broke = any(g['is_broke'] for g in groups)
+        is_bfill = any(g.get('is_bfill', False) for g in groups)
         max_loss = max((g['loss'] for g in groups if g['loss'] is not None), default=0)
 
         cells[(ri, si)] = {
             'text': cell_text,
             'is_break': is_break,
             'is_broke': is_broke,
+            'is_bfill': is_bfill,
             'max_loss': max_loss,
         }
 
@@ -382,6 +430,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     break_font = Font(bold=True, size=8, color="FFFFFF")
     broke_fill = PatternFill(start_color="FF8800", end_color="FF8800", fill_type="solid")
     broke_font = Font(bold=True, size=8, color="FFFFFF")
+    bfill_fill = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
+    bfill_font = Font(size=8, color="1F4E79")
     border = Border(
         left=Side(style='thin', color='CCCCCC'),
         right=Side(style='thin', color='CCCCCC'),
@@ -389,32 +439,47 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         bottom=Side(style='thin', color='CCCCCC'),
     )
 
-    # ── Row 1: Distances ──
-    ws.cell(row=1, column=2, value="Distance:").font = dist_font
+    # ── Row 1: A→B distances (km / ft) ──
+    a_km_font = Font(bold=True, size=9, color="1F4E79")
+    b_km_font = Font(bold=True, size=9, color="8B0000")
+    ws.cell(row=1, column=2, value="A→B:").font = a_km_font
+    ws.cell(row=2, column=2, value="B→A:").font = b_km_font
     for si, sp in enumerate(splices):
         col = si + 3  # columns C onward
-        ws.cell(row=1, column=col, value=f"{sp['position_km']:.2f}km").font = dist_font
+        km = sp['position_km']
+        ft = km * 3280.84
+        b_km = span_km - km
+        b_ft = b_km * 3280.84
+        c1 = ws.cell(row=1, column=col, value=f"{km:.2f}km / {ft:,.0f}ft")
+        c1.font = a_km_font
+        c1.alignment = Alignment(horizontal='center')
+        c2 = ws.cell(row=2, column=col, value=f"{b_km:.2f}km / {b_ft:,.0f}ft")
+        c2.font = b_km_font
+        c2.alignment = Alignment(horizontal='center')
     # Last column: end site
     end_col = n_splices + 3
-    ws.cell(row=1, column=end_col, value=f"{span_km:.2f}km").font = dist_font
+    c1 = ws.cell(row=1, column=end_col, value=f"{span_km:.2f}km / {span_km*3280.84:,.0f}ft")
+    c1.font = a_km_font
+    c2 = ws.cell(row=2, column=end_col, value="0.00km / 0ft")
+    c2.font = b_km_font
 
-    # ── Row 2: Headers ──
-    ws.cell(row=2, column=1, value="Ribbon").font = hdr_font
-    ws.cell(row=2, column=1).fill = hdr_fill
-    ws.cell(row=2, column=2, value=f"ILA:{site_a}").font = hdr_font
-    ws.cell(row=2, column=2).fill = hdr_fill
+    # ── Row 3: Headers ──
+    ws.cell(row=3, column=1, value="Ribbon").font = hdr_font
+    ws.cell(row=3, column=1).fill = hdr_fill
+    ws.cell(row=3, column=2, value=f"ILA:{site_a}").font = hdr_font
+    ws.cell(row=3, column=2).fill = hdr_fill
     for si in range(n_splices):
         col = si + 3
-        cell = ws.cell(row=2, column=col, value=f"Splice {si+1}")
+        cell = ws.cell(row=3, column=col, value=f"Splice {si+1}")
         cell.font = hdr_font
         cell.fill = hdr_fill
-    cell = ws.cell(row=2, column=end_col, value=f"ILA: {site_b}")
+    cell = ws.cell(row=3, column=end_col, value=f"ILA: {site_b}")
     cell.font = hdr_font
     cell.fill = hdr_fill
 
     # ── Data rows ──
     for ri in range(n_ribbons):
-        row = ri + 3
+        row = ri + 4
         # Column A: ribbon label
         ws.cell(row=row, column=1, value=ribbon_label(ri, ribbon_size, n_fibers)).font = ribbon_font
 
@@ -437,6 +502,9 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                 elif cd['is_broke']:
                     cell.fill = broke_fill
                     cell.font = broke_font
+                elif cd.get('is_bfill', False):
+                    cell.fill = bfill_fill
+                    cell.font = bfill_font
                 else:
                     cell.fill = red_fill
                     cell.font = data_font
@@ -491,9 +559,13 @@ def main():
     # Auto-detect span
     span_km = args.span_km
     if span_km == 0:
-        ends = [e['dist_km'] for r in fibers_a.values()
-                for e in r['events'] if e['is_end'] and e['dist_km'] > 90]
-        span_km = round(np.median(ends), 2) if ends else 97.33
+        all_ends = sorted([e['dist_km'] for r in fibers_a.values()
+                           for e in r['events'] if e['is_end']])
+        if all_ends:
+            top_quarter = all_ends[int(len(all_ends) * 0.75):]
+            span_km = round(np.median(top_quarter), 2)
+        else:
+            span_km = 0
     print(f"  Span: {span_km} km")
 
     print(f"Analyzing {len(fibers_a)} fibers at {len(splices)} splices (threshold={args.threshold:.3f} dB)...")
@@ -501,8 +573,9 @@ def main():
     n_flagged = len(results)
     n_breaks = sum(1 for r in results.values() if r['is_break'])
     n_broke = sum(1 for r in results.values() if r['is_broke'])
-    n_reburn = n_flagged - n_breaks - n_broke
-    print(f"  Flagged: {n_flagged} events ({n_breaks} breaks, {n_broke} broke, {n_reburn} reburns)")
+    n_bfill = sum(1 for r in results.values() if r.get('is_bfill', False))
+    n_reburn = n_flagged - n_breaks - n_broke - n_bfill
+    print(f"  Flagged: {n_flagged} events ({n_breaks} breaks, {n_broke} broke, {n_bfill} B-fill, {n_reburn} reburns)")
 
     print(f"Building ribbon grid...")
     cells = build_ribbon_data(results, n_fibers, args.ribbon_size, len(splices))
@@ -521,6 +594,7 @@ def main():
     print(f"  Threshold:  {args.threshold:.3f} dB")
     print(f"  Breaks:     {n_breaks}")
     print(f"  Broke:      {n_broke}")
+    print(f"  B-fill:     {n_bfill}")
     print(f"  Reburns:    {n_reburn}")
     print(f"  Output:     {args.output}")
     print()

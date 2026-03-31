@@ -79,13 +79,27 @@ def _parse_fxd_params(data, blocks):
     }
 
 
+def _read_ior(data):
+    """Read the group index (IOR) from the SOR file. Stored as uint32 * 100000."""
+    # The IOR is typically near offset 305 in EXFO files, stored as e.g. 147000 = 1.47000
+    # Search for a plausible IOR value (1.45000 to 1.49000)
+    for off in range(0, min(len(data), 1000)):
+        try:
+            val = struct.unpack_from('<I', data, off)[0]
+            if 145000 <= val <= 149000:
+                return val / 100000.0
+        except struct.error:
+            pass
+    return 1.46820  # fallback
+
+
 def _parse_key_events(data, blocks):
     if 'KeyEvents' not in blocks:
         return []
     body = blocks['KeyEvents']['body']
     num_events = struct.unpack_from('<H', data, body)[0]
     pos = body + 2
-    IOR = 1.46820
+    IOR = _read_ior(data)
     events = []
     for _ in range(num_events):
         evnum      = struct.unpack_from('<H', data, pos)[0];      pos += 2
@@ -113,17 +127,41 @@ def _parse_key_events(data, blocks):
 
 
 def _find_reflective_span(events):
-    reflective_all = [e for e in events if e['is_reflective']]
-    if len(reflective_all) < 2:
+    """Find the fiber span from launch connector to end-of-fiber.
+
+    The start is the first reflective event (1F) at or near distance 0 — the launch connector.
+    The end is the 1E (end-of-fiber) event — NOT mid-span 1F events (which are breaks/reflections).
+    """
+    # Find launch: first 1F event at distance 0
+    launch = None
+    for e in events:
+        if e['is_reflective'] and not e['is_end'] and e['time_of_travel'] == 0:
+            launch = e
+            break
+    if launch is None:
+        # Fallback: first reflective event
+        for e in events:
+            if e['is_reflective'] and not e['is_end']:
+                launch = e
+                break
+
+    # Find end: the 1E (end-of-fiber) event
+    end = None
+    for e in events:
+        if e['is_end']:
+            end = e
+            break
+
+    # Fallback: if no 1E, use the last reflective event
+    if end is None:
+        reflective_all = [e for e in events if e['is_reflective']]
+        if reflective_all:
+            end = reflective_all[-1]
+
+    if launch is None or end is None:
         return None
-    reflective_fiber = [e for e in reflective_all if not e['is_end']]
-    reflective_end   = [e for e in reflective_all if e['is_end']]
-    if len(reflective_fiber) >= 2:
-        start = reflective_fiber[1] if reflective_fiber[0]['time_of_travel'] == 0 else reflective_fiber[0]
-        return start, reflective_fiber[-1]
-    if len(reflective_fiber) == 1 and reflective_end:
-        return reflective_fiber[0], reflective_end[-1]
-    return None
+
+    return launch, end
 
 
 def _parse_data_pts(data, blocks):
@@ -142,6 +180,182 @@ def _parse_data_pts(data, blocks):
         pts_trace = (block_end - data_start) // 2
     raw = np.frombuffer(data[data_start:data_start + pts_trace * 2], dtype='<u2')
     return raw.astype(np.float64) / scale, pts_trace, scale
+
+
+# ─────────────────────────────────────────────────────────────────────
+#  EXFO Proprietary Block – richer event and calibration data
+# ─────────────────────────────────────────────────────────────────────
+
+def _decompress_proprietary(data, blocks):
+    """Decompress ExfoNewProprietaryBlock streams into a single byte string."""
+    import zlib
+    blk_name = None
+    for name in blocks:
+        if 'ExfoNewProprietaryBlock' in name:
+            blk_name = name
+            break
+    if blk_name is None:
+        return None
+    blk = blocks[blk_name]
+    raw = data[blk['body']:blk['offset'] + blk['size']]
+    chunks = []
+    pos = 36  # skip "AppReg Format Ex  \0\0" header
+    while pos < len(raw) - 4:
+        sz = struct.unpack_from('<I', raw, pos)[0]
+        if sz < 2 or sz > len(raw) - pos - 4:
+            break
+        chunk = raw[pos + 4:pos + 4 + sz]
+        if len(chunk) >= 2 and chunk[0] == 0x78:
+            try:
+                dec = zlib.decompress(chunk)
+                chunks.append(dec)
+                pos += 4 + sz
+                continue
+            except Exception:
+                pass
+        pos += 1
+    return b''.join(chunks) if chunks else None
+
+
+def _prop_f64(stream, name):
+    """Read a named float64 field from the decompressed proprietary stream."""
+    nb = name.encode() + b'\x00'
+    idx = stream.find(nb)
+    if idx < 16:
+        return None
+    type_code = struct.unpack_from('<I', stream, idx - 12)[0]
+    data_size = struct.unpack_from('<I', stream, idx - 8)[0]
+    if type_code != 3 or data_size != 8:
+        return None
+    val_off = idx + len(nb)
+    if val_off + 8 > len(stream):
+        return None
+    return struct.unpack_from('<d', stream, val_off)[0]
+
+
+def _parse_proprietary_block(data, blocks):
+    """
+    Decode the ExfoNewProprietaryBlock into calibration and event data.
+
+    Field descriptor format in decompressed stream:
+        [self_offset: 4B LE] [type_code: 4B LE] [data_size: 4B LE]
+        [next_ref: 4B LE] FieldName\\0 [value_bytes]
+    Type codes: 1=uint32, 2=binary array, 3=float64
+
+    Trace encoding (RawSamples):
+        loss_dB = 64.0 - raw_uint16 / 1024.0
+        (ScaleFactor=1024, inverted vs standard DataPts which uses scale=1000)
+
+    Returns None if the block is absent or undecodable.
+    """
+    stream = _decompress_proprietary(data, blocks)
+    if not stream:
+        return None
+
+    # ── Scalar calibration / hardware fields ──
+    cal = {}
+    for name in ('SamplingPeriod', 'DisplayRange', 'InjectionLevel', 'ScaleFactor',
+                 'SaturationLevel', 'BaseClockPeriod', 'NominalPulseWidth',
+                 'CalibratedPulseWidth', 'PulseRiseTime', 'PulseFallTime',
+                 'Bandwidth', 'TypicalApdGain', 'TypicalAnalogGain',
+                 'NominalWavelength', 'ExactWavelength', 'InternalModuleReflection',
+                 'FresnelCorrection', 'SaturationLevelLinear', 'RmsNoise',
+                 'ModuleTemperature', 'ApdTemperature', 'NormalizationExponent',
+                 'TimeToOutputConnector', 'UnfilteredRawDataRmsNoise',
+                 'SpansLoss', 'SpansLength', 'TotalOrl'):
+        v = _prop_f64(stream, name)
+        if v is not None:
+            cal[name] = v
+
+    # NumberOfAverages is uint32
+    nb = b'NumberOfAverages\x00'
+    idx = stream.find(nb)
+    if idx >= 16:
+        tc = struct.unpack_from('<I', stream, idx - 12)[0]
+        if tc == 1 and idx + len(nb) + 4 <= len(stream):
+            cal['NumberOfAverages'] = struct.unpack_from('<I', stream, idx + len(nb))[0]
+
+    # ── Parse EventTable entries ──
+    exfo_events = []
+    et_idx = stream.find(b'EventTable\x00')
+    if et_idx >= 0:
+        current = None
+        is_section = False
+
+        def _flush(current, is_section, exfo_events):
+            if current and len(current) > 2:
+                current['_is_section'] = is_section
+                exfo_events.append(current)
+
+        pos = et_idx
+        search_end = min(len(stream) - 1, et_idx + 80000)
+
+        while pos < search_end:
+            end = stream.find(b'\x00', pos)
+            if end < 0:
+                break
+            length = end - pos
+            if length < 2 or length >= 80:
+                pos = end + 1
+                continue
+            try:
+                name = stream[pos:end].decode('ascii')
+            except Exception:
+                pos = end + 1
+                continue
+            if not (name.isprintable() and name[0].isalpha()):
+                pos = end + 1
+                continue
+
+            type_code = data_size = 0
+            if pos >= 16:
+                type_code = struct.unpack_from('<I', stream, pos - 12)[0]
+                data_size = struct.unpack_from('<I', stream, pos - 8)[0]
+
+            val_off = end + 1
+            value = None
+            if type_code == 3 and data_size == 8 and val_off + 8 <= len(stream):
+                value = struct.unpack_from('<d', stream, val_off)[0]
+            elif type_code == 1 and data_size == 4 and val_off + 4 <= len(stream):
+                value = struct.unpack_from('<I', stream, val_off)[0]
+
+            if name == 'Position' and value is not None:
+                _flush(current, is_section, exfo_events)
+                current = {'Position': value}
+                is_section = False
+            elif current is not None:
+                if name == 'Type' and value is not None:
+                    current['Type'] = value
+                elif name == 'Loss' and value is not None:
+                    current['Loss'] = value
+                    if 'Type' not in current:
+                        is_section = True
+                elif name in ('CurveLevel', 'Reflectance', 'PeakReflectionToRbs',
+                               'LocalNoise', 'Length', 'Status',
+                               'CursorAPosition', 'CursorBPosition',
+                               'SubCursorAPosition', 'SubCursorBPosition') and value is not None:
+                    current[name] = value
+
+            pos = end + 1
+
+        _flush(current, is_section, exfo_events)
+
+    # Keep only events with plausible positions (0–500 km)
+    exfo_events = [e for e in exfo_events
+                   if isinstance(e.get('Position'), float) and -1 <= e['Position'] <= 500]
+
+    exact_wl = cal.get('ExactWavelength')
+    return {
+        'calibration':       cal,
+        'exfo_events':       exfo_events,
+        'spans_loss':        cal.get('SpansLoss'),
+        'spans_length':      cal.get('SpansLength'),
+        'total_orl':         cal.get('TotalOrl'),
+        'sampling_period':   cal.get('SamplingPeriod'),
+        'exact_wavelength_nm': exact_wl * 1e9 if exact_wl else None,
+        'injection_level':   cal.get('InjectionLevel'),
+        'saturation_level':  cal.get('SaturationLevel'),
+    }
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -190,7 +404,7 @@ def parse_sor_full(filepath, trim=True):
         si = max(0, min(si, len(full_trace) - 1))
         ei = max(si, min(ei, len(full_trace) - 1))
     trace = full_trace[si:ei + 1]
-    return {
+    result = {
         'filename': os.path.basename(filepath), 'filepath': filepath,
         'num_points': len(trace), 'trace': trace,
         'min_db': float(trace.min()), 'max_db': float(trace.max()),
@@ -200,6 +414,29 @@ def parse_sor_full(filepath, trim=True):
         'full_points': len(full_trace),
         'date_time': fxd.get('date_time', 0),
     }
+    # ── Augment with EXFO proprietary block data when present ──
+    prop = _parse_proprietary_block(data, blocks)
+    if prop:
+        result['exfo_calibration']    = prop['calibration']
+        result['exfo_events']         = prop['exfo_events']
+        result['exfo_spans_loss']     = prop['spans_loss']
+        result['exfo_spans_length']   = prop['spans_length']
+        result['exfo_total_orl']      = prop['total_orl']
+        result['exfo_sampling_period']= prop['sampling_period']
+        result['exfo_wavelength_nm']  = prop['exact_wavelength_nm']
+        result['exfo_injection_level']= prop['injection_level']
+        result['exfo_saturation_level']= prop['saturation_level']
+    else:
+        result['exfo_calibration']     = None
+        result['exfo_events']          = None
+        result['exfo_spans_loss']      = None
+        result['exfo_spans_length']    = None
+        result['exfo_total_orl']       = None
+        result['exfo_sampling_period'] = None
+        result['exfo_wavelength_nm']   = None
+        result['exfo_injection_level'] = None
+        result['exfo_saturation_level']= None
+    return result
 
 
 # ─────────────────────────────────────────────────────────────────────
