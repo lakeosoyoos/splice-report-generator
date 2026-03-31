@@ -328,10 +328,10 @@ if run_button and has_a:
         f"**Threshold:** {threshold:.3f} dB",
         "",
         f"**Flagged events:** {n_flagged}",
-        f"  - Breaks: {n_breaks}",
-        f"  - Broke: {n_broke}",
-        f"  - B-fill: {n_bfill}",
-        f"  - Reburns: {n_reburn}",
+        f"  - Breaks: {n_breaks} — OTDR detected 1F reflective event (clean cut, glass-to-air Fresnel reflection)",
+        f"  - Broke: {n_broke} — fiber trace terminates mid-span with no reflection (crush, stress fracture)",
+        f"  - B-fill: {n_bfill} — B-direction loss used past a break where A-direction is blind",
+        f"  - Reburns: {n_reburn} — bidirectional splice loss >= {threshold:.3f} dB, needs re-splice",
     ]
     st.session_state.summary = "\n\n".join(summary)
     st.session_state.log_output = log_buf.getvalue()
