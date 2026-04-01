@@ -736,6 +736,7 @@ else:
     <p class="tc-section-sub" style="color:#ffffff;">Upload your A and B direction SOR files. The report finds every flagged event — whether one direction saw it or both.</p>
     """, unsafe_allow_html=True)
 
+    # ── Top row: Pass 1 / Pass 2 ──────────────────────────────────────────────
     col1, col2 = st.columns(2)
 
     with col1:
@@ -748,18 +749,6 @@ else:
                 <li>Detects broke fibers (mid-span trace termination)</li>
                 <li>Fills B-direction data past breaks where A is blind</li>
                 <li>Flags A-only events with estimated bidir = A / 2</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-        st.markdown("""
-        <div class="tc-card">
-            <div class="tc-card-title">How To Use</div>
-            <ul class="tc-list">
-                <li>Upload A-direction SOR files (required) and B-direction (optional) via ZIP, file browser, or folder path</li>
-                <li>Set site names, reburn threshold, and ribbon size in the sidebar</li>
-                <li>Click <strong>Generate Report</strong></li>
-                <li>Download the color-coded Excel splice QC report</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -779,6 +768,23 @@ else:
         </div>
         """, unsafe_allow_html=True)
 
+    # ── Bottom row: How To Use / Color Key ────────────────────────────────────
+    col3, col4 = st.columns(2)
+
+    with col3:
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">How To Use</div>
+            <ul class="tc-list">
+                <li>Upload A-direction SOR files (required) and B-direction (optional) via ZIP, file browser, or folder path</li>
+                <li>Set site names, reburn threshold, and ribbon size in the sidebar</li>
+                <li>Click <strong>Generate Report</strong></li>
+                <li>Download the color-coded Excel splice QC report</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col4:
         st.markdown("""
         <div class="tc-card">
             <div class="tc-card-title">Excel Report Color Key</div>
