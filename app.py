@@ -732,8 +732,8 @@ else:
     """, unsafe_allow_html=True)
 
     st.markdown("""
-    <p class="tc-section-title">Splice Quality Customized to Your Span</p>
-    <p class="tc-section-sub">Upload your A and B direction SOR files. The report finds every flagged event — whether one direction saw it or both.</p>
+    <p class="tc-section-title" style="color:#ffffff;">Splice Quality Customized to Your Span</p>
+    <p class="tc-section-sub" style="color:#ffffff;">Upload your A and B direction SOR files. The report finds every flagged event — whether one direction saw it or both.</p>
     """, unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
