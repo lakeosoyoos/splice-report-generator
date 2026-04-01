@@ -317,21 +317,30 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] small {
     color: #aaa !important;
 }
-[data-testid="stSidebar"] .stCheckbox label,
-[data-testid="stSidebar"] .stCheckbox label:hover,
-[data-testid="stSidebar"] .stCheckbox span {
+/* Checkbox label text — transparent background, light text */
+[data-testid="stSidebar"] .stCheckbox label {
+    background-color: transparent !important;
+    background: transparent !important;
+}
+[data-testid="stSidebar"] .stCheckbox label:hover {
+    background-color: transparent !important;
+    background: transparent !important;
+}
+/* The text node inside the label */
+[data-testid="stSidebar"] .stCheckbox label > div,
+[data-testid="stSidebar"] .stCheckbox label p {
     color: #e8e8e8 !important;
     font-family: 'Nunito', sans-serif !important;
     font-weight: 700 !important;
     background-color: transparent !important;
-    background: transparent !important;
 }
-[data-testid="stSidebar"] .stCheckbox input[type="checkbox"]:checked + div,
-[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] [aria-checked="true"] {
+/* Checked box fill — orange, but only the indicator square */
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] [aria-checked="true"] > div:first-child {
     background-color: #E8461E !important;
     border-color: #E8461E !important;
 }
-[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] div {
+/* Unchecked box border */
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] > div:first-child {
     border-color: #E8461E !important;
 }
 
