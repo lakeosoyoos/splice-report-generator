@@ -361,10 +361,26 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 a { color: #E8461E !important; }
 
 /* ── Expander ────────────────────────────────────────────────── */
+[data-testid="stExpander"] {
+    border: 1px solid #e0e0e0 !important;
+    border-radius: 4px !important;
+    background: #ffffff !important;
+}
 [data-testid="stExpander"] summary {
     font-family: 'Nunito', sans-serif !important;
     font-weight: 800 !important;
-    color: #1a1a1a;
+    color: #1a1a1a !important;
+    background: #ffffff !important;
+}
+[data-testid="stExpander"] summary:hover {
+    color: #E8461E !important;
+}
+[data-testid="stExpander"] summary p,
+[data-testid="stExpander"] summary span,
+[data-testid="stExpander"] summary * {
+    color: #1a1a1a !important;
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 800 !important;
 }
 </style>
 """, unsafe_allow_html=True)
