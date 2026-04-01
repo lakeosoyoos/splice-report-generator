@@ -1,7 +1,7 @@
 """
 Splice Report Generator — Streamlit App
 ========================================
-EXFO-match splice QC report from OTDR SOR files.
+Bidirectional splice QC report from OTDR SOR files.
 
 Two-pass analysis:
   Pass 1 — standard bidirectional splice analysis at known splice positions
@@ -728,7 +728,7 @@ else:
     st.markdown("""
     <div class="tc-hero">
         <h1>Where Accuracy<br>Meets Every Fiber</h1>
-        <p>EXFO-match bidirectional splice QC — two-pass analysis catches what standard reports miss</p>
+        <p>Bidirectional splice QC — two-pass analysis catches what standard reports miss</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -775,7 +775,7 @@ else:
                 <li>Matches to nearest splice position within 1.5 km</li>
                 <li>If A event also found: computes true bidirectional average</li>
                 <li>If no A event: flags as B-only with estimated bidir = B / 2</li>
-                <li>Catches events like EXFO — regardless of which direction saw it first</li>
+                <li>Catches events regardless of which direction saw it first</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
