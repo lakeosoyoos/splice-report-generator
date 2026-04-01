@@ -728,7 +728,6 @@ else:
     st.markdown("""
     <div class="tc-hero">
         <h1>Where Accuracy<br>Meets Every Fiber</h1>
-        <p>Bidirectional splice QC — two-pass analysis catches what standard reports miss</p>
     </div>
     """, unsafe_allow_html=True)
 
