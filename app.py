@@ -413,6 +413,29 @@ button[data-testid="stBaseButton-headerNoPadding"],
     border-color: #E8461E !important;
 }
 
+/* ── Equal-height columns ────────────────────────────────────── */
+[data-testid="stHorizontalBlock"] {
+    align-items: stretch !important;
+}
+[data-testid="stHorizontalBlock"] > * {
+    display: flex !important;
+    flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"] > * > [data-testid="stVerticalBlock"] {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+[data-testid="stHorizontalBlock"] [data-testid="stMarkdownContainer"] {
+    flex: 1 !important;
+    display: flex !important;
+    flex-direction: column !important;
+}
+.tc-card {
+    flex: 1 !important;
+    margin-bottom: 0 !important;
+}
+
 /* ── Links ───────────────────────────────────────────────────── */
 a { color: #E8461E !important; }
 
