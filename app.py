@@ -357,12 +357,16 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 .stRadio [role="radiogroup"] label:has(input:checked) p {
     color: inherit !important;
 }
-/* Orange filled circle on selected */
-.stRadio [role="radiogroup"] input[type="radio"]:checked {
-    accent-color: #E8461E !important;
+/* Override Streamlit/BaseWeb primary color for radio dot */
+:root {
+    --primary-color: #E8461E !important;
 }
-.stRadio [role="radiogroup"] input[type="radio"] {
-    accent-color: #E8461E !important;
+[data-baseweb="radio"] [role="radio"][aria-checked="true"] div {
+    background-color: #E8461E !important;
+    border-color: #E8461E !important;
+}
+[data-baseweb="radio"] [role="radio"] div {
+    border-color: #E8461E !important;
 }
 
 /* ── Links ───────────────────────────────────────────────────── */
