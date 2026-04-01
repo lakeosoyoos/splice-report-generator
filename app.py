@@ -491,8 +491,6 @@ with st.sidebar:
     st.divider()
     st.markdown("## Settings")
 
-    site_a      = st.text_input("Site A name", value="STR")
-    site_b      = st.text_input("Site B name", value="ROM")
     threshold   = st.number_input("Reburn threshold (dB)", value=REBURN_THRESHOLD,
                                   format="%.3f", step=0.01)
     ribbon_size = st.number_input("Fibers per ribbon", value=RIBBON_SIZE,
@@ -507,6 +505,39 @@ with st.sidebar:
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
+
+def detect_sites(dir_a, dir_b=None):
+    """
+    Auto-detect site A and B names from the folder name or first SOR filename.
+    e.g. folder 'TULBAR' → ('TUL', 'BAR'), file 'STRROM001.sor' → ('STR', 'ROM')
+    Falls back to ('A', 'B') if nothing parseable is found.
+    """
+    candidates = []
+    # Folder name of dir_a
+    candidates.append(os.path.basename(os.path.normpath(dir_a)).upper())
+    # First SOR filename in dir_a
+    try:
+        sor_files = sorted([f for f in os.listdir(dir_a) if f.lower().endswith('.sor')])
+        if sor_files:
+            candidates.append(sor_files[0].split('.')[0].split('_')[0].upper())
+    except Exception:
+        pass
+
+    for name in candidates:
+        # Strip common suffixes
+        for suffix in ['_1550', '_1310', '_SOR', '_FILES']:
+            name = name.replace(suffix, '')
+        alpha = ''.join(c for c in name if c.isalpha())
+        # Prefer clean 6-char split: first 3 = site A, next 3 = site B
+        if len(alpha) == 6:
+            return alpha[:3], alpha[3:]
+        # Allow 3+4 or 4+3
+        if len(alpha) in (7, 8):
+            mid = len(alpha) // 2
+            return alpha[:mid], alpha[mid:]
+
+    return 'A', 'B'
+
 
 def stage_files(uploaded, prefix="sor_"):
     tmpdir = tempfile.mkdtemp(prefix=prefix)
@@ -550,6 +581,9 @@ if run_button and has_a:
         dir_b = stage_files(uploaded_b, "splice_b_") if uploaded_b else None
         prog.progress(0.5, text="Files staged.")
         prog.empty()
+
+    # Auto-detect site names from folder/filenames
+    site_a, site_b = detect_sites(dir_a, dir_b)
 
     bar     = st.progress(0.0, text="Loading SOR files...")
     log_buf = io.StringIO()
