@@ -27,7 +27,7 @@ from splicereportmatchexfo import (
     REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
 )
 
-# ── Page config ──────────────────────────────────────────────────────────────
+# ── Page config ───────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title="Splice Report Generator",
@@ -36,62 +36,356 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# ── Global styles (Trucordia aesthetic) ───────────────────────────────────────
+
 st.markdown("""
 <style>
-    .stButton > button[kind="primary"],
-    .stDownloadButton > button[kind="primary"] {
-        background-color: #4BA82E !important;
-        border-color: #4BA82E !important;
-        color: white !important;
-    }
-    .stButton > button[kind="primary"]:hover,
-    .stDownloadButton > button[kind="primary"]:hover {
-        background-color: #3D8C24 !important;
-        border-color: #3D8C24 !important;
-    }
-    .stButton > button,
-    .stDownloadButton > button {
-        border-color: #4BA82E !important;
-        color: #4BA82E !important;
-    }
-    .stButton > button:hover,
-    .stDownloadButton > button:hover {
-        border-color: #3D8C24 !important;
-        color: #3D8C24 !important;
-    }
-    .stProgress > div > div > div > div {
-        background-color: #4BA82E !important;
-    }
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] p,
-    [data-testid="stSidebar"] span,
-    [data-testid="stSidebar"] .stMarkdown,
-    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
-        color: white !important;
-    }
-    .stRadio [role="radiogroup"] label[data-checked="true"],
-    .stRadio [role="radiogroup"] label:has(input:checked) {
-        background-color: #4BA82E !important;
-        border-color: #4BA82E !important;
-        color: white !important;
-    }
-    .stRadio [role="radiogroup"] label[data-checked="true"] p,
-    .stRadio [role="radiogroup"] label:has(input:checked) p {
-        color: white !important;
-    }
-    .stRadio [role="radiogroup"] label {
-        border-color: #4BA82E !important;
-    }
-    a { color: #4BA82E !important; }
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+
+/* ── Reset & base ────────────────────────────────────────────── */
+#MainMenu       { visibility: hidden; }
+footer          { visibility: hidden; }
+header          { visibility: hidden; }
+.stDeployButton { display: none; }
+
+html, body, [class*="css"], .stMarkdown, p, label, span, div {
+    font-family: 'Nunito', 'Segoe UI', Arial, sans-serif !important;
+}
+.main .block-container {
+    padding-top: 0rem !important;
+    padding-bottom: 2rem;
+    max-width: 1200px;
+}
+
+/* ── Top utility strip ───────────────────────────────────────── */
+.tc-topbar {
+    background: #1C2526;
+    color: #cccccc;
+    font-size: 12px;
+    font-weight: 600;
+    font-family: 'Nunito', sans-serif;
+    padding: 7px 36px;
+    display: flex;
+    justify-content: flex-end;
+    gap: 28px;
+    letter-spacing: 0.4px;
+}
+.tc-topbar span { color: #aaaaaa; cursor: default; }
+
+/* ── Main nav bar ────────────────────────────────────────────── */
+.tc-navbar {
+    background: #ffffff;
+    border-bottom: 2px solid #eeeeee;
+    padding: 16px 36px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+}
+.tc-logo-icon {
+    font-size: 30px;
+    font-weight: 900;
+    color: #E8461E;
+    line-height: 1;
+    font-family: 'Nunito', sans-serif;
+    transform: skewX(-8deg);
+    display: inline-block;
+}
+.tc-logo-name {
+    font-size: 22px;
+    font-weight: 900;
+    color: #1a1a1a;
+    font-family: 'Nunito', sans-serif;
+    letter-spacing: -0.3px;
+}
+.tc-navbar-spacer { flex: 1; }
+.tc-contact-btn {
+    border: 2px solid #E8461E;
+    color: #1a1a1a;
+    font-family: 'Nunito', sans-serif;
+    font-weight: 800;
+    font-size: 13px;
+    padding: 8px 18px;
+    position: relative;
+    cursor: default;
+    letter-spacing: 0.2px;
+}
+.tc-contact-btn::after {
+    content: "";
+    position: absolute;
+    bottom: -2px;
+    right: -2px;
+    width: 10px;
+    height: 10px;
+    background: #E8461E;
+}
+
+/* ── Hero banner ─────────────────────────────────────────────── */
+.tc-hero {
+    background: linear-gradient(105deg, #E8461E 55%, #c23610 100%);
+    padding: 42px 36px 38px 36px;
+    margin-bottom: 32px;
+}
+.tc-hero h1 {
+    font-family: 'Nunito', sans-serif;
+    font-size: 34px;
+    font-weight: 900;
+    color: #ffffff;
+    margin: 0 0 10px 0;
+    line-height: 1.15;
+    letter-spacing: -0.3px;
+}
+.tc-hero p {
+    font-family: 'Nunito', sans-serif;
+    font-size: 15px;
+    color: rgba(255,255,255,0.88);
+    margin: 0;
+    font-weight: 600;
+}
+
+/* ── Section headings ────────────────────────────────────────── */
+.tc-section-title {
+    font-family: 'Nunito', sans-serif;
+    font-size: 22px;
+    font-weight: 900;
+    color: #1a1a1a;
+    margin: 0 0 4px 0;
+    letter-spacing: -0.2px;
+}
+.tc-section-sub {
+    font-family: 'Nunito', sans-serif;
+    font-size: 14px;
+    color: #666;
+    font-weight: 600;
+    margin: 0 0 20px 0;
+}
+
+/* ── Cards ───────────────────────────────────────────────────── */
+.tc-card {
+    background: #ffffff;
+    border: 1px solid #e5e5e5;
+    border-top: 4px solid #E8461E;
+    border-radius: 4px;
+    padding: 24px 26px;
+    margin-bottom: 18px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+}
+.tc-card-title {
+    font-family: 'Nunito', sans-serif;
+    font-size: 16px;
+    font-weight: 900;
+    color: #1a1a1a;
+    margin: 0 0 14px 0;
+    letter-spacing: -0.1px;
+}
+
+/* ── Checklist ───────────────────────────────────────────────── */
+.tc-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+.tc-list li {
+    font-family: 'Nunito', sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    color: #333;
+    padding: 5px 0;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    line-height: 1.5;
+}
+.tc-list li::before {
+    content: "▸";
+    color: #E8461E;
+    font-weight: 900;
+    font-size: 14px;
+    flex-shrink: 0;
+    margin-top: 1px;
+}
+
+/* ── Stat tiles ──────────────────────────────────────────────── */
+.tc-stat-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    margin: 0 0 28px 0;
+}
+.tc-stat {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-top: 4px solid #E8461E;
+    border-radius: 4px;
+    padding: 16px 20px;
+    min-width: 130px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.04);
+}
+.tc-stat-label {
+    font-family: 'Nunito', sans-serif;
+    font-size: 11px;
+    font-weight: 800;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+}
+.tc-stat-value {
+    font-family: 'Nunito', sans-serif;
+    font-size: 30px;
+    font-weight: 900;
+    color: #1a1a1a;
+    line-height: 1;
+}
+.tc-stat-sub {
+    font-family: 'Nunito', sans-serif;
+    font-size: 11px;
+    font-weight: 600;
+    color: #777;
+    margin-top: 3px;
+}
+
+/* ── Color legend pills ──────────────────────────────────────── */
+.tc-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+.tc-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 5px 12px;
+    border-radius: 3px;
+    font-family: 'Nunito', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    background: #f5f5f5;
+    border: 1px solid #ddd;
+    color: #333;
+}
+.tc-swatch {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+    flex-shrink: 0;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────── */
+[data-testid="stSidebar"] {
+    background-color: #1C2526 !important;
+    border-right: 3px solid #E8461E !important;
+}
+[data-testid="stSidebar"] > div:first-child {
+    padding-top: 0.5rem;
+}
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] span,
+[data-testid="stSidebar"] .stMarkdown,
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+    font-family: 'Nunito', sans-serif !important;
+    color: #e8e8e8 !important;
+}
+[data-testid="stSidebar"] .stTextInput input,
+[data-testid="stSidebar"] .stNumberInput input {
+    background: #243030 !important;
+    border-color: #E8461E !important;
+    color: #e8e8e8 !important;
+    font-family: 'Nunito', sans-serif !important;
+}
+[data-testid="stSidebar"] hr {
+    border-color: #2e3d3d !important;
+}
+[data-testid="stSidebar"] .stCaption,
+[data-testid="stSidebar"] small {
+    color: #aaa !important;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────── */
+.stButton > button[kind="primary"],
+.stDownloadButton > button[kind="primary"] {
+    background-color: #E8461E !important;
+    border-color: #E8461E !important;
+    color: white !important;
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 800 !important;
+    border-radius: 3px !important;
+    letter-spacing: 0.3px;
+}
+.stButton > button[kind="primary"]:hover,
+.stDownloadButton > button[kind="primary"]:hover {
+    background-color: #c23610 !important;
+    border-color: #c23610 !important;
+}
+.stButton > button,
+.stDownloadButton > button {
+    border-color: #E8461E !important;
+    color: #E8461E !important;
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 800 !important;
+    border-radius: 3px !important;
+}
+.stButton > button:hover,
+.stDownloadButton > button:hover {
+    border-color: #c23610 !important;
+    color: #c23610 !important;
+}
+
+/* ── Progress bar ────────────────────────────────────────────── */
+.stProgress > div > div > div > div {
+    background-color: #E8461E !important;
+}
+
+/* ── Radio ───────────────────────────────────────────────────── */
+.stRadio [role="radiogroup"] label[data-checked="true"],
+.stRadio [role="radiogroup"] label:has(input:checked) {
+    background-color: #E8461E !important;
+    border-color: #E8461E !important;
+    color: white !important;
+}
+.stRadio [role="radiogroup"] label[data-checked="true"] p,
+.stRadio [role="radiogroup"] label:has(input:checked) p {
+    color: white !important;
+}
+.stRadio [role="radiogroup"] label {
+    border-color: #E8461E !important;
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 700 !important;
+}
+
+/* ── Links ───────────────────────────────────────────────────── */
+a { color: #E8461E !important; }
+
+/* ── Expander ────────────────────────────────────────────────── */
+[data-testid="stExpander"] summary {
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 800 !important;
+    color: #1a1a1a;
+}
 </style>
 """, unsafe_allow_html=True)
 
-st.title("Splice Report Generator")
-st.caption("EXFO-match bidirectional splice QC — Pass 1: splice positions · Pass 2: B-direction event scan")
+# ── Navigation ────────────────────────────────────────────────────────────────
+
+st.markdown("""
+<div class="tc-topbar">
+    <span>Splice QC Tools</span>
+    <span>Help</span>
+</div>
+<div class="tc-navbar">
+    <div class="tc-logo-icon">↗</div>
+    <div class="tc-logo-name">Splice Report Generator</div>
+    <div class="tc-navbar-spacer"></div>
+    <div class="tc-contact-btn">OTDR QC &nbsp; ▸</div>
+</div>
+""", unsafe_allow_html=True)
 
 
-# ── Password protection ──────────────────────────────────────────────────────
+# ── Password protection ───────────────────────────────────────────────────────
 
 def check_password():
     if "authenticated" not in st.session_state:
@@ -115,19 +409,19 @@ if not check_password():
     st.stop()
 
 
-# ── Session state ────────────────────────────────────────────────────────────
+# ── Session state ─────────────────────────────────────────────────────────────
 
-for key in ["xlsx_bytes", "xlsx_name", "summary", "log_output", "done"]:
+for key in ["xlsx_bytes", "xlsx_name", "summary_data", "log_output", "done"]:
     if key not in st.session_state:
         st.session_state[key] = None
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
 
 
-# ── Sidebar ──────────────────────────────────────────────────────────────────
+# ── Sidebar ───────────────────────────────────────────────────────────────────
 
 with st.sidebar:
-    st.header("Upload SOR Files")
+    st.markdown("## Upload SOR Files")
 
     input_method = st.radio(
         "Input method",
@@ -138,67 +432,52 @@ with st.sidebar:
 
     uploaded_a = None
     uploaded_b = None
-    zip_a = None
-    zip_b = None
-    folder_a = None
-    folder_b = None
+    zip_a      = None
+    zip_b      = None
+    folder_a   = None
+    folder_b   = None
 
     if input_method == "Upload ZIP":
-        zip_a = st.file_uploader(
-            "A-direction ZIP",
-            type=["zip"],
-            accept_multiple_files=False,
-            key=f"zip_a_{st.session_state.upload_key}",
-        )
+        zip_a = st.file_uploader("A-direction ZIP", type=["zip"],
+                                 accept_multiple_files=False,
+                                 key=f"zip_a_{st.session_state.upload_key}")
         if zip_a:
-            st.caption(f"A: {zip_a.name} ({zip_a.size / 1024:.0f} KB)")
-        zip_b = st.file_uploader(
-            "B-direction ZIP (optional)",
-            type=["zip"],
-            accept_multiple_files=False,
-            key=f"zip_b_{st.session_state.upload_key}",
-        )
+            st.caption(f"A: {zip_a.name} ({zip_a.size/1024:.0f} KB)")
+        zip_b = st.file_uploader("B-direction ZIP (optional)", type=["zip"],
+                                 accept_multiple_files=False,
+                                 key=f"zip_b_{st.session_state.upload_key}")
         if zip_b:
-            st.caption(f"B: {zip_b.name} ({zip_b.size / 1024:.0f} KB)")
+            st.caption(f"B: {zip_b.name} ({zip_b.size/1024:.0f} KB)")
+
     elif input_method == "Browse files":
-        uploaded_a = st.file_uploader(
-            "A-direction SOR files",
-            type=["sor"],
-            accept_multiple_files=True,
-            key=f"upload_a_{st.session_state.upload_key}",
-        )
-        uploaded_b = st.file_uploader(
-            "B-direction SOR files (optional)",
-            type=["sor"],
-            accept_multiple_files=True,
-            key=f"upload_b_{st.session_state.upload_key}",
-        )
+        uploaded_a = st.file_uploader("A-direction SOR files", type=["sor"],
+                                      accept_multiple_files=True,
+                                      key=f"upload_a_{st.session_state.upload_key}")
+        uploaded_b = st.file_uploader("B-direction SOR files (optional)", type=["sor"],
+                                      accept_multiple_files=True,
+                                      key=f"upload_b_{st.session_state.upload_key}")
     else:
-        folder_a = st.text_input(
-            "A-direction folder path",
-            value=st.session_state.get("folder_a", ""),
-            placeholder="/Users/you/Desktop/A Direction/",
-        )
+        folder_a = st.text_input("A-direction folder path",
+                                 value=st.session_state.get("folder_a", ""),
+                                 placeholder="/Users/you/Desktop/A Direction/")
         if folder_a:
             folder_a = folder_a.strip().strip("'\"")
             st.session_state.folder_a = folder_a
             if os.path.isdir(folder_a):
                 n = len([f for f in os.listdir(folder_a) if f.lower().endswith('.sor')])
-                st.caption(f"Found {n} .sor files")
+                st.caption(f"▸ Found {n} .sor files")
             else:
                 st.warning("Folder not found")
 
-        folder_b = st.text_input(
-            "B-direction folder path (optional)",
-            value=st.session_state.get("folder_b", ""),
-            placeholder="/Users/you/Desktop/B Direction/",
-        )
+        folder_b = st.text_input("B-direction folder path (optional)",
+                                 value=st.session_state.get("folder_b", ""),
+                                 placeholder="/Users/you/Desktop/B Direction/")
         if folder_b:
             folder_b = folder_b.strip().strip("'\"")
             st.session_state.folder_b = folder_b
             if os.path.isdir(folder_b):
                 n = len([f for f in os.listdir(folder_b) if f.lower().endswith('.sor')])
-                st.caption(f"Found {n} .sor files")
+                st.caption(f"▸ Found {n} .sor files")
             elif folder_b.strip():
                 st.warning("Folder not found")
 
@@ -210,16 +489,16 @@ with st.sidebar:
         st.rerun()
 
     st.divider()
-    st.subheader("Settings")
+    st.markdown("## Settings")
 
-    site_a = st.text_input("Site A name", value="STR")
-    site_b = st.text_input("Site B name", value="ROM")
-    threshold = st.number_input("Reburn threshold (dB)", value=REBURN_THRESHOLD,
-                                format="%.3f", step=0.01)
+    site_a      = st.text_input("Site A name", value="STR")
+    site_b      = st.text_input("Site B name", value="ROM")
+    threshold   = st.number_input("Reburn threshold (dB)", value=REBURN_THRESHOLD,
+                                  format="%.3f", step=0.01)
     ribbon_size = st.number_input("Fibers per ribbon", value=RIBBON_SIZE,
-                                   min_value=1, max_value=24, step=1)
-    span_km = st.number_input("Span distance (km, 0=auto)", value=0.0,
-                               format="%.2f", step=1.0)
+                                  min_value=1, max_value=24, step=1)
+    span_km     = st.number_input("Span distance (km, 0=auto)", value=0.0,
+                                  format="%.2f", step=1.0)
 
     has_a = (bool(uploaded_a) or bool(zip_a) or
              (folder_a and os.path.isdir(folder_a)))
@@ -227,13 +506,12 @@ with st.sidebar:
                            use_container_width=True, disabled=not has_a)
 
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def stage_files(uploaded, prefix="sor_"):
     tmpdir = tempfile.mkdtemp(prefix=prefix)
     for uf in uploaded:
-        fp = os.path.join(tmpdir, uf.name)
-        with open(fp, 'wb') as f:
+        with open(os.path.join(tmpdir, uf.name), 'wb') as f:
             f.write(uf.getbuffer())
     return tmpdir
 
@@ -247,148 +525,193 @@ def stage_zip(uploaded_zip, prefix="sor_zip_"):
                 basename = os.path.basename(name)
                 if not basename:
                     continue
-                fp = os.path.join(tmpdir, basename)
-                with zf.open(name) as src, open(fp, 'wb') as dst:
+                with zf.open(name) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
                     dst.write(src.read())
     return tmpdir
 
 
-# ── Run ──────────────────────────────────────────────────────────────────────
+# ── Run ───────────────────────────────────────────────────────────────────────
 
 if run_button and has_a:
-    # Stage files
     if folder_a and os.path.isdir(folder_a):
         dir_a = folder_a
         dir_b = folder_b if (folder_b and os.path.isdir(folder_b)) else None
     elif zip_a:
-        progress = st.progress(0.0, text="Extracting A-direction ZIP...")
+        prog = st.progress(0.0, text="Extracting A-direction ZIP...")
         dir_a = stage_zip(zip_a, "splice_a_")
-        progress.progress(0.4, text="Extracting B-direction ZIP...")
+        prog.progress(0.4, text="Extracting B-direction ZIP...")
         dir_b = stage_zip(zip_b, "splice_b_") if zip_b else None
-        progress.progress(0.5, text="Files extracted.")
-        progress.empty()
+        prog.progress(0.5, text="Files extracted.")
+        prog.empty()
     else:
-        progress = st.progress(0.0, text="Staging A-direction files...")
+        prog = st.progress(0.0, text="Staging A-direction files...")
         dir_a = stage_files(uploaded_a, "splice_a_")
-        progress.progress(0.4, text="Staging B-direction files...")
+        prog.progress(0.4, text="Staging B-direction files...")
         dir_b = stage_files(uploaded_b, "splice_b_") if uploaded_b else None
-        progress.progress(0.5, text="Files staged.")
-        progress.empty()
+        prog.progress(0.5, text="Files staged.")
+        prog.empty()
 
-    analysis_bar = st.progress(0.0, text="Loading SOR files...")
+    bar     = st.progress(0.0, text="Loading SOR files...")
     log_buf = io.StringIO()
 
-    # Load
     with redirect_stdout(log_buf):
         fibers_a, fibers_b = load_all(dir_a, dir_b)
     n_fibers = max(fibers_a.keys()) if fibers_a else 0
-    analysis_bar.progress(0.15, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
+    bar.progress(0.15, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
 
-    # Discover splices
     with redirect_stdout(log_buf):
         splices = discover_splices(fibers_a)
-    analysis_bar.progress(0.30, text=f"Found {len(splices)} splice closures...")
+    bar.progress(0.30, text=f"Found {len(splices)} splice closures...")
 
-    # Auto-detect span
     actual_span = span_km
     if actual_span == 0:
         all_ends = sorted([e['dist_km'] for r in fibers_a.values()
                            for e in r['events'] if e['is_end']])
         if all_ends:
-            top_quarter = all_ends[int(len(all_ends) * 0.75):]
-            actual_span = round(np.median(top_quarter), 2)
+            top_q = all_ends[int(len(all_ends) * 0.75):]
+            actual_span = round(np.median(top_q), 2)
 
-    # Pass 1 — standard bidirectional analysis at splice positions
-    analysis_bar.progress(0.45, text=f"Pass 1: analyzing {n_fibers} fibers at {len(splices)} splice positions...")
+    bar.progress(0.45, text=f"Pass 1: {n_fibers} fibers × {len(splices)} splice positions...")
     with redirect_stdout(log_buf):
         results = analyze_all(fibers_a, fibers_b, splices, threshold)
 
-    # Pass 2 — B-direction event scan for events missed by Pass 1
-    analysis_bar.progress(0.65, text="Pass 2: scanning B-direction for missed events...")
+    bar.progress(0.65, text="Pass 2: scanning B-direction for missed events...")
     with redirect_stdout(log_buf):
         b_results = scan_b_events(fibers_a, fibers_b, splices, threshold, results, actual_span)
 
-    # Merge — Pass 1 takes priority
     all_results = {**results, **b_results}
 
-    # Count event types
-    n_reburn = sum(1 for r in all_results.values()
-                   if r.get('event_source') == 'bidir' and not r['is_break'])
-    n_breaks  = sum(1 for r in all_results.values() if r['is_break'])
-    n_broke   = sum(1 for r in all_results.values() if r['is_broke'])
-    n_bfill   = sum(1 for r in all_results.values() if r.get('is_bfill', False))
-    n_a_only  = sum(1 for r in all_results.values() if r.get('is_a_only', False))
-    n_b_only  = sum(1 for r in all_results.values() if r.get('is_b_only', False))
-    n_b_only_high = sum(1 for r in all_results.values()
-                        if r.get('is_b_only') and r.get('est_bidir_flagged'))
-    n_a_only_high = sum(1 for r in all_results.values()
-                        if r.get('is_a_only') and r.get('est_bidir_flagged'))
-    n_flagged = len(all_results)
+    n_reburn      = sum(1 for r in all_results.values() if r.get('event_source') == 'bidir' and not r['is_break'])
+    n_breaks      = sum(1 for r in all_results.values() if r['is_break'])
+    n_broke       = sum(1 for r in all_results.values() if r['is_broke'])
+    n_bfill       = sum(1 for r in all_results.values() if r.get('is_bfill', False))
+    n_a_only      = sum(1 for r in all_results.values() if r.get('is_a_only', False))
+    n_b_only      = sum(1 for r in all_results.values() if r.get('is_b_only', False))
+    n_b_only_high = sum(1 for r in all_results.values() if r.get('is_b_only') and r.get('est_bidir_flagged'))
+    n_a_only_high = sum(1 for r in all_results.values() if r.get('is_a_only') and r.get('est_bidir_flagged'))
 
-    # Build grid and write Excel
-    analysis_bar.progress(0.80, text="Building ribbon grid...")
+    bar.progress(0.80, text="Building ribbon grid...")
     with redirect_stdout(log_buf):
         cells = build_ribbon_data(all_results, n_fibers, ribbon_size, len(splices))
 
-    analysis_bar.progress(0.92, text="Writing Excel report...")
-    xlsx_tmpdir = tempfile.mkdtemp(prefix="splice_xlsx_")
-    xlsx_path = os.path.join(xlsx_tmpdir, "splice_report.xlsx")
+    bar.progress(0.92, text="Writing Excel report...")
+    xlsx_dir  = tempfile.mkdtemp(prefix="splice_xlsx_")
+    xlsx_path = os.path.join(xlsx_dir, "splice_report.xlsx")
     with redirect_stdout(log_buf):
         write_xlsx(cells, splices, n_fibers, ribbon_size, xlsx_path,
                    site_a, site_b, actual_span)
 
     with open(xlsx_path, 'rb') as f:
         st.session_state.xlsx_bytes = f.read()
-    st.session_state.xlsx_name = f"splice_report_{site_a}_{site_b}.xlsx"
-
-    # Build summary
-    summary_lines = [
-        f"**Fibers:** {n_fibers}",
-        f"**Splice closures:** {len(splices)}",
-        f"**Span:** {actual_span} km  ({actual_span * 3280.84:,.0f} ft)",
-        f"**Threshold:** {threshold:.3f} dB",
-        "",
-        f"**Total flagged events:** {n_flagged}",
-        "",
-        "**Pass 1 — Splice positions (A+B bidirectional):**",
-        f"  - Reburns: {n_reburn} — bidirectional splice loss >= {threshold:.3f} dB, needs re-splice  *(pink)*",
-        f"  - Breaks: {n_breaks} — OTDR detected 1F reflective event (clean cut, glass-to-air Fresnel reflection)  *(red)*",
-        f"  - Broke: {n_broke} — fiber trace terminates mid-span with no reflection (crush, stress fracture)  *(orange)*",
-        f"  - B-fill: {n_bfill} — B-direction loss used past a break where A-direction is blind  *(blue)*",
-        f"  - A-only: {n_a_only} — A-direction saw it, no matching B entry found; "
-        f"{n_a_only_high} have estimated bidir >= threshold  *(yellow/gold)*",
-        "",
-        "**Pass 2 — B-direction event scan (EXFO-match):**",
-        f"  - B-only: {n_b_only} — B-direction saw it, A-direction had no entry; "
-        f"{n_b_only_high} have estimated bidir >= threshold  *(lavender/purple)*",
-        "",
-        "**Cell label guide:**",
-        "  - `325 .172` — A+B confirmed bidirectional",
-        "  - `325 .285(A) ~.143bd` — A-only, estimated bidir below threshold",
-        "  - `325 .285(A) ⚠.143bd` — A-only, estimated bidir still above threshold",
-        "  - `325 .340(B) ⚠.170bd` — B-only, estimated bidir still above threshold",
-        "  - `107 broke` — fiber terminates mid-span",
-    ]
-    st.session_state.summary = "\n\n".join(summary_lines)
+    st.session_state.xlsx_name   = f"splice_report_{site_a}_{site_b}.xlsx"
+    st.session_state.summary_data = dict(
+        n_fibers=n_fibers, n_splices=len(splices), actual_span=actual_span,
+        threshold=threshold, n_flagged=len(all_results),
+        n_reburn=n_reburn, n_breaks=n_breaks, n_broke=n_broke,
+        n_bfill=n_bfill, n_a_only=n_a_only, n_a_only_high=n_a_only_high,
+        n_b_only=n_b_only, n_b_only_high=n_b_only_high,
+        site_a=site_a, site_b=site_b,
+    )
     st.session_state.log_output = log_buf.getvalue()
-    st.session_state.done = True
+    st.session_state.done       = True
 
-    analysis_bar.progress(1.0, text="Done!")
-    analysis_bar.empty()
+    bar.progress(1.0, text="Done!")
+    bar.empty()
 
 
-# ── Display ──────────────────────────────────────────────────────────────────
+# ── Display ───────────────────────────────────────────────────────────────────
 
 if st.session_state.get("done"):
-    st.subheader("Report Complete")
-    if st.session_state.summary:
-        st.markdown(st.session_state.summary)
+    d = st.session_state.summary_data
 
-    st.divider()
+    # Hero
+    st.markdown(f"""
+    <div class="tc-hero">
+        <h1>Report Complete<br>{d['site_a']} → {d['site_b']}</h1>
+        <p>{d['n_fibers']} fibers &nbsp;·&nbsp; {d['n_splices']} splice closures
+           &nbsp;·&nbsp; {d['actual_span']} km ({d['actual_span']*3280.84:,.0f} ft)
+           &nbsp;·&nbsp; Threshold: {d['threshold']:.3f} dB</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    # Stat tiles
+    st.markdown(f"""
+    <div class="tc-stat-row">
+        <div class="tc-stat">
+            <div class="tc-stat-label">Total Flagged</div>
+            <div class="tc-stat-value">{d['n_flagged']}</div>
+            <div class="tc-stat-sub">events requiring attention</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">A+B Reburns</div>
+            <div class="tc-stat-value">{d['n_reburn']}</div>
+            <div class="tc-stat-sub">bidir ≥ {d['threshold']:.3f} dB</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">Breaks</div>
+            <div class="tc-stat-value">{d['n_breaks']}</div>
+            <div class="tc-stat-sub">1F reflective events</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">Broke</div>
+            <div class="tc-stat-value">{d['n_broke']}</div>
+            <div class="tc-stat-sub">mid-span terminations</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">B-fill</div>
+            <div class="tc-stat-value">{d['n_bfill']}</div>
+            <div class="tc-stat-sub">past-break B-direction</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">A-only</div>
+            <div class="tc-stat-value">{d['n_a_only']}</div>
+            <div class="tc-stat-sub">{d['n_a_only_high']} est. bidir high</div>
+        </div>
+        <div class="tc-stat">
+            <div class="tc-stat-label">B-only</div>
+            <div class="tc-stat-value">{d['n_b_only']}</div>
+            <div class="tc-stat-sub">{d['n_b_only_high']} est. bidir high</div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">Flagged Event Types</div>
+            <ul class="tc-list">
+                <li><strong>A+B Reburn (pink)</strong> — both directions confirmed, bidir loss ≥ threshold. Splice needs re-work.</li>
+                <li><strong>Break (red)</strong> — 1F reflective event. Clean cut with glass-to-air Fresnel reflection.</li>
+                <li><strong>Broke (orange)</strong> — trace terminates mid-span with no reflection. Crush or stress fracture.</li>
+                <li><strong>B-fill (blue)</strong> — B-direction loss past a break where A-direction is blind.</li>
+                <li><strong>A-only (yellow/gold)</strong> — A saw it, B event table had no entry. Gold = est. bidir ≥ threshold.</li>
+                <li><strong>B-only (lavender/purple)</strong> — B saw it, A had no entry. Purple = est. bidir ≥ threshold.</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    with col2:
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">Cell Label Guide</div>
+            <ul class="tc-list">
+                <li><code>325 .172</code> — A+B confirmed bidirectional loss</li>
+                <li><code>107 broke</code> — fiber terminates mid-span</li>
+                <li><code>107 BREAK .210</code> — 1F reflective break event</li>
+                <li><code>325 .285(A) ~.143bd</code> — A-only, est. bidir below threshold</li>
+                <li><code>325 .285(A) ⚠.143bd</code> — A-only, est. bidir above threshold</li>
+                <li><code>325 .340(B) ⚠.170bd</code> — B-only, est. bidir above threshold</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown("<br>", unsafe_allow_html=True)
 
     if st.session_state.xlsx_bytes:
         st.download_button(
-            "⬇ Download Excel Report",
+            "⬇  Download Excel Report",
             st.session_state.xlsx_bytes,
             file_name=st.session_state.xlsx_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -400,33 +723,75 @@ if st.session_state.get("done"):
         st.code(st.session_state.log_output or "No log.", language=None)
 
 else:
-    st.info("Upload A-direction SOR files (and optionally B-direction) in the sidebar, then click **Generate Report**.")
+    # ── Landing ───────────────────────────────────────────────────────────────
+
     st.markdown("""
-    **How it works:**
-    1. Upload **A-direction** SOR files (required) and **B-direction** (optional)
-    2. Set your site names, reburn threshold, and ribbon size
-    3. Click **Generate Report**
-    4. Download the Excel splice QC report
+    <div class="tc-hero">
+        <h1>Where Accuracy<br>Meets Every Fiber</h1>
+        <p>EXFO-match bidirectional splice QC — two-pass analysis catches what standard reports miss</p>
+    </div>
+    """, unsafe_allow_html=True)
 
-    **Two-pass analysis (EXFO-match):**
+    st.markdown("""
+    <p class="tc-section-title">Splice Quality Customized to Your Span</p>
+    <p class="tc-section-sub">Upload your A and B direction SOR files. The report finds every flagged event — whether one direction saw it or both.</p>
+    """, unsafe_allow_html=True)
 
-    **Pass 1** — Standard bidirectional splice analysis at known splice closure positions:
-    - Finds A+B confirmed bidirectional events, flags if loss >= threshold
-    - Flags A-only events (A saw it, B event table had no entry)
-    - Detects broke fibers and fills B-direction data past breaks
+    col1, col2 = st.columns(2)
 
-    **Pass 2** — Scans all B-direction events not caught in Pass 1:
-    - Converts B-frame positions to A-frame and matches to nearest splice
-    - If A event also found: computes bidirectional average
-    - If no A event: flags as B-only with estimated bidir = B / 2
+    with col1:
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">Pass 1 — Splice Position Analysis</div>
+            <ul class="tc-list">
+                <li>Discovers splice closure positions where 20+ fibers share an event</li>
+                <li>Finds A+B bidirectional events and flags if loss ≥ threshold</li>
+                <li>Detects broke fibers (mid-span trace termination)</li>
+                <li>Fills B-direction data past breaks where A is blind</li>
+                <li>Flags A-only events with estimated bidir = A / 2</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
-    **Cell colors:**
-    - 🟥 **Pink** — A+B reburn (bidir >= threshold)
-    - 🔴 **Red** — Break (1F reflective)
-    - 🟠 **Orange** — Broke (mid-span termination)
-    - 🔵 **Blue** — B-fill (past a break)
-    - 🟡 **Yellow/Gold** — A-only (A saw it, B did not; gold = est bidir still high)
-    - 🟣 **Lavender/Purple** — B-only (B saw it, A did not; purple = est bidir still high)
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">How To Use</div>
+            <ul class="tc-list">
+                <li>Upload A-direction SOR files (required) and B-direction (optional) via ZIP, file browser, or folder path</li>
+                <li>Set site names, reburn threshold, and ribbon size in the sidebar</li>
+                <li>Click <strong>Generate Report</strong></li>
+                <li>Download the color-coded Excel splice QC report</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
 
-    See the **Legend** sheet in the downloaded Excel for full details.
-    """)
+    with col2:
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">Pass 2 — B-Direction Event Scan</div>
+            <ul class="tc-list">
+                <li>Scans every B-direction event above threshold not caught in Pass 1</li>
+                <li>Converts B-frame positions to A-frame coordinates</li>
+                <li>Matches to nearest splice position within 1.5 km</li>
+                <li>If A event also found: computes true bidirectional average</li>
+                <li>If no A event: flags as B-only with estimated bidir = B / 2</li>
+                <li>Catches events like EXFO — regardless of which direction saw it first</li>
+            </ul>
+        </div>
+        """, unsafe_allow_html=True)
+
+        st.markdown("""
+        <div class="tc-card">
+            <div class="tc-card-title">Excel Report Color Key</div>
+            <div class="tc-legend">
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink — A+B Reburn</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red — Break</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange — Broke</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue — B-fill</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow — A-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold — A-only ⚠</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender — B-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple — B-only ⚠</span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
