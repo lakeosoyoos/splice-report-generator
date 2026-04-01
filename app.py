@@ -303,6 +303,11 @@ button[data-testid="stBaseButton-headerNoPadding"],
     font-family: 'Nunito', sans-serif !important;
     color: #e8e8e8 !important;
 }
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    text-align: center !important;
+}
 [data-testid="stSidebar"] .stTextInput input,
 [data-testid="stSidebar"] .stNumberInput input {
     background: #243030 !important;
