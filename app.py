@@ -322,20 +322,13 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] small {
     color: #aaa !important;
 }
-/* Fix file uploader overlap at wide sidebar widths */
-[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] {
-    flex-direction: column !important;
-    align-items: stretch !important;
+/* Fix file uploader — hide duplicate instruction text, keep button only */
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
+    display: none !important;
 }
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] {
-    flex-direction: column !important;
-    align-items: center !important;
-    gap: 8px !important;
-}
-[data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
-    flex-direction: column !important;
-    align-items: center !important;
-    text-align: center !important;
+    justify-content: center !important;
+    padding: 8px 0 !important;
 }
 /* Checkbox label text — transparent background, light text */
 [data-testid="stSidebar"] .stCheckbox label {
