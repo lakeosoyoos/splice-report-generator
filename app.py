@@ -341,20 +341,28 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 }
 
 /* ── Radio ───────────────────────────────────────────────────── */
+.stRadio [role="radiogroup"] label {
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 700 !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+}
 .stRadio [role="radiogroup"] label[data-checked="true"],
 .stRadio [role="radiogroup"] label:has(input:checked) {
-    background-color: #E8461E !important;
-    border-color: #E8461E !important;
-    color: white !important;
+    background-color: transparent !important;
+    border-color: transparent !important;
+    color: inherit !important;
 }
 .stRadio [role="radiogroup"] label[data-checked="true"] p,
 .stRadio [role="radiogroup"] label:has(input:checked) p {
-    color: white !important;
+    color: inherit !important;
 }
-.stRadio [role="radiogroup"] label {
-    border-color: #E8461E !important;
-    font-family: 'Nunito', sans-serif !important;
-    font-weight: 700 !important;
+/* Orange filled circle on selected */
+.stRadio [role="radiogroup"] input[type="radio"]:checked {
+    accent-color: #E8461E !important;
+}
+.stRadio [role="radiogroup"] input[type="radio"] {
+    accent-color: #E8461E !important;
 }
 
 /* ── Links ───────────────────────────────────────────────────── */
