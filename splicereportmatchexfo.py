@@ -273,7 +273,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             # B event table had no entry within tolerance — estimate bidir as A/2
             if b_loss is None:
                 a_loss_abs = abs(ea['splice_loss'])
-                if a_loss_abs >= threshold:
+                if a_loss_abs / 2.0 >= threshold:
                     est_bidir = round(a_loss_abs / 2.0, 3)
                     loss_str = f"{a_loss_abs:.3f}"
                     if loss_str.startswith('0.'): loss_str = loss_str[1:]
@@ -370,7 +370,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
             b_loss_signed = e['splice_loss']
             b_loss_abs = abs(b_loss_signed)
-            if b_loss_abs < threshold:
+            if b_loss_abs / 2.0 < threshold:
                 continue
 
             # Convert B-frame position to A-frame
