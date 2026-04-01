@@ -961,8 +961,7 @@ else:
                 <li>Upload A-direction SOR files (required) and B-direction (optional) as a ZIP or individual files</li>
                 <li>Adjust the reburn threshold if needed - default is 0.150 dB</li>
                 <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the output</li>
-                <li>Click <strong>Generate Report</strong> - site names are detected automatically from the file names</li>
-                <li>Download the color-coded Excel splice QC report</li>
+                <li>Click <strong>Generate Report</strong> to download the color-coded Excel splice QC report</li>
             </ul>
         </div>
         <div class="tc-card" style="flex:1; margin-bottom:0;">
