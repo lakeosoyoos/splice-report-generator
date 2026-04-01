@@ -737,8 +737,7 @@ if st.session_state.get("done"):
             type="primary",
         )
 
-    with st.expander("Analysis Log"):
-        st.code(st.session_state.log_output or "No log.", language=None)
+
 
 else:
     # ── Landing ───────────────────────────────────────────────────────────────
