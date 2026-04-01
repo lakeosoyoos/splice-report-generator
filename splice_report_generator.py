@@ -439,47 +439,33 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         bottom=Side(style='thin', color='CCCCCC'),
     )
 
-    # ── Row 1: A→B distances (km / ft) ──
-    a_km_font = Font(bold=True, size=9, color="1F4E79")
-    b_km_font = Font(bold=True, size=9, color="8B0000")
-    ws.cell(row=1, column=2, value="A→B:").font = a_km_font
-    ws.cell(row=2, column=2, value="B→A:").font = b_km_font
+    # ── Row 1: Combined header — splice number + A→B and B→A in km and ft ──
+    end_col = n_splices + 3
+    hdr_align = Alignment(horizontal='center', vertical='center', wrap_text=True)
+
+    cell = ws.cell(row=1, column=1, value="Ribbon")
+    cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
+
+    cell = ws.cell(row=1, column=2, value=f"ILA\n{site_a}")
+    cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
+
     for si, sp in enumerate(splices):
-        col = si + 3  # columns C onward
-        km = sp['position_km']
-        ft = km * 3280.84
+        col = si + 3
+        km   = sp['position_km']
+        ft   = km * 3280.84
         b_km = span_km - km
         b_ft = b_km * 3280.84
-        c1 = ws.cell(row=1, column=col, value=f"{km:.2f}km / {ft:,.0f}ft")
-        c1.font = a_km_font
-        c1.alignment = Alignment(horizontal='center')
-        c2 = ws.cell(row=2, column=col, value=f"{b_km:.2f}km / {b_ft:,.0f}ft")
-        c2.font = b_km_font
-        c2.alignment = Alignment(horizontal='center')
-    # Last column: end site
-    end_col = n_splices + 3
-    c1 = ws.cell(row=1, column=end_col, value=f"{span_km:.2f}km / {span_km*3280.84:,.0f}ft")
-    c1.font = a_km_font
-    c2 = ws.cell(row=2, column=end_col, value="0.00km / 0ft")
-    c2.font = b_km_font
+        label = f"Splice {si+1}\n{site_a}→{site_b}: {km:.2f}km / {ft:,.0f}ft\n{site_b}→{site_a}: {b_km:.2f}km / {b_ft:,.0f}ft"
+        cell = ws.cell(row=1, column=col, value=label)
+        cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
 
-    # ── Row 3: Headers ──
-    ws.cell(row=3, column=1, value="Ribbon").font = hdr_font
-    ws.cell(row=3, column=1).fill = hdr_fill
-    ws.cell(row=3, column=2, value=f"ILA:{site_a}").font = hdr_font
-    ws.cell(row=3, column=2).fill = hdr_fill
-    for si in range(n_splices):
-        col = si + 3
-        cell = ws.cell(row=3, column=col, value=f"Splice {si+1}")
-        cell.font = hdr_font
-        cell.fill = hdr_fill
-    cell = ws.cell(row=3, column=end_col, value=f"ILA: {site_b}")
-    cell.font = hdr_font
-    cell.fill = hdr_fill
+    cell = ws.cell(row=1, column=end_col,
+                   value=f"ILA\n{site_b}\n{site_a}→{site_b}: {span_km:.2f}km / {span_km*3280.84:,.0f}ft\n{site_b}→{site_a}: 0.00km / 0ft")
+    cell.font = hdr_font; cell.fill = hdr_fill; cell.alignment = hdr_align
 
     # ── Data rows ──
     for ri in range(n_ribbons):
-        row = ri + 4
+        row = ri + 2
         # Column A: ribbon label
         ws.cell(row=row, column=1, value=ribbon_label(ri, ribbon_size, n_fibers)).font = ribbon_font
 
@@ -516,8 +502,11 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         col_letter = openpyxl.utils.get_column_letter(si + 3)
         ws.column_dimensions[col_letter].width = 22
 
+    # ── Row height for header ──
+    ws.row_dimensions[1].height = 48
+
     # ── Freeze panes ──
-    ws.freeze_panes = 'C3'
+    ws.freeze_panes = 'C2'
 
     wb.save(output_path)
     print(f"  Saved: {output_path}")
