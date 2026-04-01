@@ -559,7 +559,7 @@ with st.sidebar:
     st.divider()
     st.markdown("## Settings")
 
-    threshold   = st.number_input("Reburn threshold (dB, 0.15=auto)", value=REBURN_THRESHOLD,
+    threshold   = st.number_input("Bidirectional threshold (dB, 0.15=auto)", value=REBURN_THRESHOLD,
                                   format="%.3f", step=0.01)
     ribbon_size = RIBBON_SIZE
 
