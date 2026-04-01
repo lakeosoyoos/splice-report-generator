@@ -942,9 +942,10 @@ else:
         <div class="tc-card">
             <div class="tc-card-title">How To Use</div>
             <ul class="tc-list">
-                <li>Upload A-direction SOR files (required) and B-direction (optional) via ZIP, file browser, or folder path</li>
-                <li>Set site names, reburn threshold, and ribbon size in the sidebar</li>
-                <li>Click <strong>Generate Report</strong></li>
+                <li>Upload A-direction SOR files (required) and B-direction (optional) as a ZIP or individual files</li>
+                <li>Adjust the reburn threshold if needed — default is 0.150 dB</li>
+                <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the output</li>
+                <li>Click <strong>Generate Report</strong> — site names are detected automatically from the file names</li>
                 <li>Download the color-coded Excel splice QC report</li>
             </ul>
         </div>
