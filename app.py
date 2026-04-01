@@ -425,7 +425,7 @@ with st.sidebar:
 
     input_method = st.radio(
         "Input method",
-        ["Upload ZIP", "Browse files", "Folder path"],
+        ["Upload ZIP", "Browse files"],
         index=0,
         horizontal=True,
     )
@@ -434,8 +434,6 @@ with st.sidebar:
     uploaded_b = None
     zip_a      = None
     zip_b      = None
-    folder_a   = None
-    folder_b   = None
 
     if input_method == "Upload ZIP":
         zip_a = st.file_uploader("A-direction ZIP", type=["zip"],
@@ -449,38 +447,13 @@ with st.sidebar:
         if zip_b:
             st.caption(f"B: {zip_b.name} ({zip_b.size/1024:.0f} KB)")
 
-    elif input_method == "Browse files":
+    else:
         uploaded_a = st.file_uploader("A-direction SOR files", type=["sor"],
                                       accept_multiple_files=True,
                                       key=f"upload_a_{st.session_state.upload_key}")
         uploaded_b = st.file_uploader("B-direction SOR files (optional)", type=["sor"],
                                       accept_multiple_files=True,
                                       key=f"upload_b_{st.session_state.upload_key}")
-    else:
-        folder_a = st.text_input("A-direction folder path",
-                                 value=st.session_state.get("folder_a", ""),
-                                 placeholder="/Users/you/Desktop/A Direction/")
-        if folder_a:
-            folder_a = folder_a.strip().strip("'\"")
-            st.session_state.folder_a = folder_a
-            if os.path.isdir(folder_a):
-                n = len([f for f in os.listdir(folder_a) if f.lower().endswith('.sor')])
-                st.caption(f"▸ Found {n} .sor files")
-            else:
-                st.warning("Folder not found")
-
-        folder_b = st.text_input("B-direction folder path (optional)",
-                                 value=st.session_state.get("folder_b", ""),
-                                 placeholder="/Users/you/Desktop/B Direction/")
-        if folder_b:
-            folder_b = folder_b.strip().strip("'\"")
-            st.session_state.folder_b = folder_b
-            if os.path.isdir(folder_b):
-                n = len([f for f in os.listdir(folder_b) if f.lower().endswith('.sor')])
-                st.caption(f"▸ Found {n} .sor files")
-            elif folder_b.strip():
-                st.warning("Folder not found")
-
     if st.button("Clear All", use_container_width=True):
         old_key = st.session_state.upload_key
         for key in list(st.session_state.keys()):
@@ -497,8 +470,7 @@ with st.sidebar:
     span_km     = st.number_input("Span distance (km, 0=auto)", value=0.0,
                                   format="%.2f", step=1.0)
 
-    has_a = (bool(uploaded_a) or bool(zip_a) or
-             (folder_a and os.path.isdir(folder_a)))
+    has_a = (bool(uploaded_a) or bool(zip_a))
     run_button = st.button("Generate Report", type="primary",
                            use_container_width=True, disabled=not has_a)
 
@@ -563,10 +535,7 @@ def stage_zip(uploaded_zip, prefix="sor_zip_"):
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 if run_button and has_a:
-    if folder_a and os.path.isdir(folder_a):
-        dir_a = folder_a
-        dir_b = folder_b if (folder_b and os.path.isdir(folder_b)) else None
-    elif zip_a:
+    if zip_a:
         prog = st.progress(0.0, text="Extracting A-direction ZIP...")
         dir_a = stage_zip(zip_a, "splice_a_")
         prog.progress(0.4, text="Extracting B-direction ZIP...")
