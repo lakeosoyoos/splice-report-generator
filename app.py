@@ -789,9 +789,10 @@ if st.session_state.get("done"):
     with col2:
         import streamlit.components.v1 as components
         components.html("""
+        <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
         <style>
             * { box-sizing: border-box; margin: 0; padding: 0; }
-            body { background: transparent; font-family: 'Calibri','Carlito',sans-serif; }
+            body { background: transparent; font-family: 'Nunito', 'Segoe UI', Arial, sans-serif; }
             .card {
                 background: #ffffff;
                 border: 1px solid #e5e5e5;
@@ -801,8 +802,9 @@ if st.session_state.get("done"):
                 box-shadow: 0 2px 10px rgba(0,0,0,0.05);
             }
             .card-title {
+                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
                 font-size: 15px;
-                font-weight: 700;
+                font-weight: 900;
                 color: #1a1a1a;
                 margin-bottom: 14px;
                 letter-spacing: -0.1px;
@@ -813,6 +815,7 @@ if st.session_state.get("done"):
                 margin-bottom: 7px;
             }
             .sample {
+                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
                 font-size: 11px;
                 font-weight: 700;
                 padding: 2px 7px;
@@ -822,8 +825,9 @@ if st.session_state.get("done"):
                 flex-shrink: 0;
             }
             .desc {
+                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
                 font-size: 12px;
-                font-weight: 400;
+                font-weight: 600;
                 color: #444;
                 padding-left: 12px;
             }
