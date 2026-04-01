@@ -804,12 +804,12 @@ if st.session_state.get("done"):
         <div class="tc-card">
             <div class="tc-card-title">Flagged Event Types</div>
             <ul class="tc-list">
-                <li><strong>A+B Reburn (pink)</strong> — both directions confirmed, bidir loss ≥ threshold. Splice needs re-work.</li>
-                <li><strong>Break (red)</strong> — 1F reflective event. Clean cut with glass-to-air Fresnel reflection.</li>
-                <li><strong>Broke (orange)</strong> — trace terminates mid-span with no reflection. Crush or stress fracture.</li>
-                <li><strong>B-fill (blue)</strong> — B-direction loss past a break where A-direction is blind.</li>
-                <li><strong>A-only (yellow/gold)</strong> — A saw it, B event table had no entry. Gold = est. bidir ≥ threshold.</li>
-                <li><strong>B-only (lavender/purple)</strong> — B saw it, A had no entry. Purple = est. bidir ≥ threshold.</li>
+                <li><strong>A+B Reburn (pink)</strong> - both directions confirmed, bidir loss >= threshold. Splice needs re-work.</li>
+                <li><strong>Break (red)</strong> - 1F reflective event. Clean cut with glass-to-air Fresnel reflection.</li>
+                <li><strong>Broke (orange)</strong> - trace terminates mid-span with no reflection. Crush or stress fracture.</li>
+                <li><strong>B-fill (blue)</strong> - B-direction loss past a break where A-direction is blind.</li>
+                <li><strong>A-only (yellow/gold)</strong> - A saw it, B event table had no entry. Gold = est. bidir >= threshold.</li>
+                <li><strong>B-only (lavender/purple)</strong> - B saw it, A had no entry. Purple = est. bidir >= threshold.</li>
             </ul>
         </div>
         """, unsafe_allow_html=True)
@@ -922,30 +922,24 @@ else:
 
     st.markdown("""
     <p class="tc-section-title" style="color:#ffffff;">Splice Quality Customized to Your Span</p>
-    <p class="tc-section-sub" style="color:#ffffff;">Upload your A and B direction SOR files. The report finds every flagged event — whether one direction saw it or both.</p>
+    <p class="tc-section-sub" style="color:#ffffff;">Upload your A and B direction SOR files. The report finds every flagged event - whether one direction saw it or both.</p>
     """, unsafe_allow_html=True)
 
     # ── Top row: Pass 1 / Pass 2 ──────────────────────────────────────────────
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        <div class="tc-card">
-            <div class="tc-card-title">Pass 1 — Splice Position Analysis</div>
+    st.markdown("""
+    <div style="display:flex; gap:18px; align-items:stretch; margin-bottom:18px;">
+        <div class="tc-card" style="flex:1; margin-bottom:0;">
+            <div class="tc-card-title">Pass 1 - Splice Position Analysis</div>
             <ul class="tc-list">
                 <li>Discovers splice closure positions where 20+ fibers share an event</li>
-                <li>Finds A+B bidirectional events and flags if loss ≥ threshold</li>
+                <li>Finds A+B bidirectional events and flags if loss >= threshold</li>
                 <li>Detects broke fibers (mid-span trace termination)</li>
                 <li>Fills B-direction data past breaks where A is blind</li>
                 <li>Flags A-only events with estimated bidir = A / 2</li>
             </ul>
         </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        st.markdown("""
-        <div class="tc-card">
-            <div class="tc-card-title">Pass 2 — B-Direction Event Scan</div>
+        <div class="tc-card" style="flex:1; margin-bottom:0;">
+            <div class="tc-card-title">Pass 2 - B-Direction Event Scan</div>
             <ul class="tc-list">
                 <li>Scans every B-direction event above threshold not caught in Pass 1</li>
                 <li>Converts B-frame positions to A-frame coordinates</li>
@@ -955,38 +949,34 @@ else:
                 <li>Catches events regardless of which direction saw it first</li>
             </ul>
         </div>
-        """, unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
 
     # ── Bottom row: How To Use / Color Key ────────────────────────────────────
-    col3, col4 = st.columns(2)
-
-    with col3:
-        st.markdown("""
-        <div class="tc-card">
+    st.markdown("""
+    <div style="display:flex; gap:18px; align-items:stretch; margin-bottom:18px;">
+        <div class="tc-card" style="flex:1; margin-bottom:0;">
             <div class="tc-card-title">How To Use</div>
             <ul class="tc-list">
                 <li>Upload A-direction SOR files (required) and B-direction (optional) as a ZIP or individual files</li>
-                <li>Adjust the reburn threshold if needed — default is 0.150 dB</li>
+                <li>Adjust the reburn threshold if needed - default is 0.150 dB</li>
                 <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the output</li>
-                <li>Click <strong>Generate Report</strong> — site names are detected automatically from the file names</li>
+                <li>Click <strong>Generate Report</strong> - site names are detected automatically from the file names</li>
                 <li>Download the color-coded Excel splice QC report</li>
             </ul>
         </div>
-        """, unsafe_allow_html=True)
-
-    with col4:
-        st.markdown("""
-        <div class="tc-card">
+        <div class="tc-card" style="flex:1; margin-bottom:0;">
             <div class="tc-card-title">Excel Report Color Key</div>
             <div class="tc-legend">
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink — A+B Reburn</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red — Break</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange — Broke</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue — B-fill</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow — A-only</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold — A-only ⚠</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender — B-only</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple — B-only ⚠</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink - A+B Reburn</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red - Break</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange - Broke</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue - B-fill</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow - A-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold - A-only &#9888;</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender - B-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple - B-only &#9888;</span>
             </div>
         </div>
-        """, unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
