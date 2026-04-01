@@ -450,7 +450,7 @@ st.markdown("""
 </div>
 <div class="tc-navbar">
     <div class="tc-logo-icon">↗</div>
-    <a href="/" class="tc-logo-name" style="text-decoration:none; cursor:pointer;">Splice Report Generator</a>
+    <a href="/" target="_self" class="tc-logo-name" style="text-decoration:none; cursor:pointer;">Splice Report Generator</a>
     <div class="tc-navbar-spacer"></div>
     <div class="tc-contact-btn">OTDR QC &nbsp; ▸</div>
 </div>
