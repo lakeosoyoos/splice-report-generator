@@ -317,10 +317,14 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] small {
     color: #aaa !important;
 }
-[data-testid="stSidebar"] .stCheckbox label {
+[data-testid="stSidebar"] .stCheckbox label,
+[data-testid="stSidebar"] .stCheckbox label:hover,
+[data-testid="stSidebar"] .stCheckbox span {
     color: #e8e8e8 !important;
     font-family: 'Nunito', sans-serif !important;
     font-weight: 700 !important;
+    background-color: transparent !important;
+    background: transparent !important;
 }
 [data-testid="stSidebar"] .stCheckbox input[type="checkbox"]:checked + div,
 [data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] [aria-checked="true"] {
