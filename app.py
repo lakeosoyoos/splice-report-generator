@@ -491,7 +491,7 @@ with st.sidebar:
     st.divider()
     st.markdown("## Settings")
 
-    threshold   = st.number_input("Reburn threshold (dB)", value=REBURN_THRESHOLD,
+    threshold   = st.number_input("Reburn threshold (dB, 0.15=auto)", value=REBURN_THRESHOLD,
                                   format="%.3f", step=0.01)
     ribbon_size = st.number_input("Fibers per ribbon", value=RIBBON_SIZE,
                                   min_value=1, max_value=24, step=1)
