@@ -787,41 +787,83 @@ if st.session_state.get("done"):
         """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("""<div class="tc-card"><div class="tc-card-title">Cell Label Guide</div></div>""",
-                    unsafe_allow_html=True)
         import streamlit.components.v1 as components
         components.html("""
         <style>
-            body { margin:0; padding:0 0 4px 0; background:transparent; }
-            .cell { padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif;
-                    font-size:13px; font-weight:700; margin-bottom:6px; }
-            .cell span { font-weight:400; font-size:12px; }
+            * { box-sizing: border-box; margin: 0; padding: 0; }
+            body { background: transparent; font-family: 'Calibri','Carlito',sans-serif; }
+            .card {
+                background: #ffffff;
+                border: 1px solid #e5e5e5;
+                border-top: 4px solid #E8461E;
+                border-radius: 4px;
+                padding: 20px 22px 16px 22px;
+                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
+            }
+            .card-title {
+                font-size: 15px;
+                font-weight: 700;
+                color: #1a1a1a;
+                margin-bottom: 14px;
+                letter-spacing: -0.1px;
+            }
+            .row {
+                display: flex;
+                align-items: center;
+                margin-bottom: 7px;
+            }
+            .sample {
+                font-size: 11px;
+                font-weight: 700;
+                padding: 2px 7px;
+                border: 1px solid rgba(0,0,0,0.14);
+                white-space: nowrap;
+                width: 148px;
+                flex-shrink: 0;
+            }
+            .desc {
+                font-size: 12px;
+                font-weight: 400;
+                color: #444;
+                padding-left: 12px;
+            }
         </style>
-        <div class="cell" style="background:#FFC7CE; color:#1a1a1a;">
-            325 .172 <span>&#8212; A+B bidirectional reburn</span>
+        <div class="card">
+            <div class="card-title">Cell Label Guide</div>
+            <div class="row">
+                <div class="sample" style="background:#FFC7CE;color:#1a1a1a;">325 .172</div>
+                <div class="desc">A+B bidirectional reburn</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#FF4444;color:#ffffff;">107 BREAK .210</div>
+                <div class="desc">1F reflective break</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#FF8800;color:#ffffff;">107 broke</div>
+                <div class="desc">trace terminates mid-span</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#BDD7EE;color:#1F4E79;">214 .188 (B-fill)</div>
+                <div class="desc">B-direction past a break</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#FFF2CC;color:#7F6000;">83 .151(A) ~.075bd</div>
+                <div class="desc">A-only, est. bidir below threshold</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#FFD700;color:#4B3000;">122 .285(A) &#9888;.143bd</div>
+                <div class="desc">A-only, est. bidir above threshold</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#E8D5F5;color:#4B0082;">430 .161(B) ~.081bd</div>
+                <div class="desc">B-only, est. bidir below threshold</div>
+            </div>
+            <div class="row">
+                <div class="sample" style="background:#C084FC;color:#1A0033;">325 .340(B) &#9888;.170bd</div>
+                <div class="desc">B-only, est. bidir above threshold</div>
+            </div>
         </div>
-        <div class="cell" style="background:#FF4444; color:#ffffff;">
-            107 BREAK .210 <span>&#8212; 1F reflective break</span>
-        </div>
-        <div class="cell" style="background:#FF8800; color:#ffffff;">
-            107 broke <span>&#8212; trace terminates mid-span</span>
-        </div>
-        <div class="cell" style="background:#BDD7EE; color:#1F4E79;">
-            214 .188 (B-fill) <span>&#8212; B-direction past a break</span>
-        </div>
-        <div class="cell" style="background:#FFF2CC; color:#7F6000;">
-            83 .151(A) ~.075bd <span>&#8212; A-only, est. bidir below threshold</span>
-        </div>
-        <div class="cell" style="background:#FFD700; color:#4B3000;">
-            122 .285(A) &#9888;.143bd <span>&#8212; A-only, est. bidir above threshold</span>
-        </div>
-        <div class="cell" style="background:#E8D5F5; color:#4B0082;">
-            430 .161(B) ~.081bd <span>&#8212; B-only, est. bidir below threshold</span>
-        </div>
-        <div class="cell" style="background:#C084FC; color:#1A0033;">
-            325 .340(B) &#9888;.170bd <span>&#8212; B-only, est. bidir above threshold</span>
-        </div>
-        """, height=310, scrolling=False)
+        """, height=330, scrolling=False)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
