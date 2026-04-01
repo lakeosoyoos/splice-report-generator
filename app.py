@@ -483,8 +483,6 @@ with st.sidebar:
     threshold   = st.number_input("Reburn threshold (dB, 0.15=auto)", value=REBURN_THRESHOLD,
                                   format="%.3f", step=0.01)
     ribbon_size = RIBBON_SIZE
-    span_km     = st.number_input("Span distance (km, 0=auto)", value=0.0,
-                                  format="%.2f", step=1.0)
 
     has_a = (bool(uploaded_a) or bool(zip_a))
     run_button = st.button("Generate Report", type="primary",
@@ -581,7 +579,7 @@ if run_button and has_a:
         splices = discover_splices(fibers_a)
     bar.progress(0.30, text=f"Found {len(splices)} splice closures...")
 
-    actual_span = span_km
+    actual_span = 0
     if actual_span == 0:
         all_ends = sorted([e['dist_km'] for r in fibers_a.values()
                            for e in r['events'] if e['is_end']])
