@@ -275,9 +275,22 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 [data-testid="stSidebar"] {
     background-color: #1C2526 !important;
     border-right: 3px solid #E8461E !important;
+    width: 620px !important;
+    min-width: 620px !important;
+    max-width: 620px !important;
 }
 [data-testid="stSidebar"] > div:first-child {
     padding-top: 0.5rem;
+    width: 620px !important;
+}
+
+/* ── Hide sidebar collapse button (removes keyboard double) ──── */
+[data-testid="stSidebarCollapseButton"],
+[data-testid="collapsedControl"],
+button[data-testid="stBaseButton-headerNoPadding"],
+[data-testid="stSidebar"] button[title="Collapse sidebar"],
+[data-testid="stSidebar"] button[aria-label="Collapse sidebar"] {
+    display: none !important;
 }
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
@@ -303,6 +316,19 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 [data-testid="stSidebar"] .stCaption,
 [data-testid="stSidebar"] small {
     color: #aaa !important;
+}
+[data-testid="stSidebar"] .stCheckbox label {
+    color: #e8e8e8 !important;
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 700 !important;
+}
+[data-testid="stSidebar"] .stCheckbox input[type="checkbox"]:checked + div,
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] [aria-checked="true"] {
+    background-color: #E8461E !important;
+    border-color: #E8461E !important;
+}
+[data-testid="stSidebar"] .stCheckbox [data-baseweb="checkbox"] div {
+    border-color: #E8461E !important;
 }
 
 /* ── Buttons ─────────────────────────────────────────────────── */
@@ -496,6 +522,17 @@ with st.sidebar:
                                   format="%.3f", step=0.01)
     ribbon_size = RIBBON_SIZE
 
+    st.markdown("**Include in Report**")
+    col_chk1, col_chk2 = st.columns(2)
+    with col_chk1:
+        inc_reburn = st.checkbox("A+B Reburn", value=True, key="inc_reburn")
+        inc_break  = st.checkbox("Break",      value=True, key="inc_break")
+        inc_broke  = st.checkbox("Broke",      value=True, key="inc_broke")
+    with col_chk2:
+        inc_bfill  = st.checkbox("B-fill",     value=True, key="inc_bfill")
+        inc_a_only = st.checkbox("A-only",     value=True, key="inc_a_only")
+        inc_b_only = st.checkbox("B-only",     value=True, key="inc_b_only")
+
     has_a = (bool(uploaded_a) or bool(zip_a))
     run_button = st.button("Generate Report", type="primary",
                            use_container_width=True, disabled=not has_a)
@@ -609,6 +646,22 @@ if run_button and has_a:
 
     all_results = {**results, **b_results}
 
+    # ── Apply event-type filters from sidebar ──────────────────────────────
+    def _included(r):
+        if r.get('is_break')  and not st.session_state.get('inc_break',  True): return False
+        if r.get('is_broke')  and not st.session_state.get('inc_broke',  True): return False
+        if r.get('is_bfill')  and not st.session_state.get('inc_bfill',  True): return False
+        if r.get('is_a_only') and not st.session_state.get('inc_a_only', True): return False
+        if r.get('is_b_only') and not st.session_state.get('inc_b_only', True): return False
+        # bidir reburn = not break, not broke, not bfill, not a_only, not b_only
+        is_reburn = (r.get('event_source') == 'bidir'
+                     and not r.get('is_break') and not r.get('is_broke')
+                     and not r.get('is_bfill') and not r.get('is_a_only')
+                     and not r.get('is_b_only'))
+        if is_reburn and not st.session_state.get('inc_reburn', True): return False
+        return True
+    all_results = {k: v for k, v in all_results.items() if _included(v)}
+
     n_reburn      = sum(1 for r in all_results.values() if r.get('event_source') == 'bidir' and not r['is_break'])
     n_breaks      = sum(1 for r in all_results.values() if r['is_break'])
     n_broke       = sum(1 for r in all_results.values() if r['is_broke'])
@@ -721,46 +774,41 @@ if st.session_state.get("done"):
         """, unsafe_allow_html=True)
 
     with col2:
-        st.markdown("""
-        <div class="tc-card">
-            <div class="tc-card-title">Cell Label Guide</div>
-            <div style="display:flex; flex-direction:column; gap:7px; margin-top:4px;">
-
-                <div style="background:#FFC7CE; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1a1a1a;">
-                    325 .172 &nbsp;<span style="font-weight:400; font-size:12px;">— A+B bidirectional reburn</span>
-                </div>
-
-                <div style="background:#FF4444; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#ffffff;">
-                    107 BREAK .210 &nbsp;<span style="font-weight:400; font-size:12px;">— 1F reflective break</span>
-                </div>
-
-                <div style="background:#FF8800; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#ffffff;">
-                    107 broke &nbsp;<span style="font-weight:400; font-size:12px;">— trace terminates mid-span</span>
-                </div>
-
-                <div style="background:#BDD7EE; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1F4E79;">
-                    214 .188 (B-fill) &nbsp;<span style="font-weight:400; font-size:12px;">— B-direction past a break</span>
-                </div>
-
-                <div style="background:#FFF2CC; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#7F6000;">
-                    83 .151(A) ~.075bd &nbsp;<span style="font-weight:400; font-size:12px;">— A-only, est. bidir below threshold</span>
-                </div>
-
-                <div style="background:#FFD700; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#4B3000;">
-                    122 .285(A) ⚠.143bd &nbsp;<span style="font-weight:400; font-size:12px;">— A-only, est. bidir above threshold</span>
-                </div>
-
-                <div style="background:#E8D5F5; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#4B0082;">
-                    430 .161(B) ~.081bd &nbsp;<span style="font-weight:400; font-size:12px;">— B-only, est. bidir below threshold</span>
-                </div>
-
-                <div style="background:#C084FC; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1A0033;">
-                    325 .340(B) ⚠.170bd &nbsp;<span style="font-weight:400; font-size:12px;">— B-only, est. bidir above threshold</span>
-                </div>
-
-            </div>
+        st.markdown("""<div class="tc-card"><div class="tc-card-title">Cell Label Guide</div></div>""",
+                    unsafe_allow_html=True)
+        import streamlit.components.v1 as components
+        components.html("""
+        <style>
+            body { margin:0; padding:0 0 4px 0; background:transparent; }
+            .cell { padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif;
+                    font-size:13px; font-weight:700; margin-bottom:6px; }
+            .cell span { font-weight:400; font-size:12px; }
+        </style>
+        <div class="cell" style="background:#FFC7CE; color:#1a1a1a;">
+            325 .172 <span>&#8212; A+B bidirectional reburn</span>
         </div>
-        """, unsafe_allow_html=True)
+        <div class="cell" style="background:#FF4444; color:#ffffff;">
+            107 BREAK .210 <span>&#8212; 1F reflective break</span>
+        </div>
+        <div class="cell" style="background:#FF8800; color:#ffffff;">
+            107 broke <span>&#8212; trace terminates mid-span</span>
+        </div>
+        <div class="cell" style="background:#BDD7EE; color:#1F4E79;">
+            214 .188 (B-fill) <span>&#8212; B-direction past a break</span>
+        </div>
+        <div class="cell" style="background:#FFF2CC; color:#7F6000;">
+            83 .151(A) ~.075bd <span>&#8212; A-only, est. bidir below threshold</span>
+        </div>
+        <div class="cell" style="background:#FFD700; color:#4B3000;">
+            122 .285(A) &#9888;.143bd <span>&#8212; A-only, est. bidir above threshold</span>
+        </div>
+        <div class="cell" style="background:#E8D5F5; color:#4B0082;">
+            430 .161(B) ~.081bd <span>&#8212; B-only, est. bidir below threshold</span>
+        </div>
+        <div class="cell" style="background:#C084FC; color:#1A0033;">
+            325 .340(B) &#9888;.170bd <span>&#8212; B-only, est. bidir above threshold</span>
+        </div>
+        """, height=310, scrolling=False)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
