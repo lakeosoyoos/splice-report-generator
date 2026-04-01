@@ -93,7 +93,7 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
 .tc-logo-name {
     font-size: 22px;
     font-weight: 900;
-    color: #1a1a1a;
+    color: #1a1a1a !important;
     font-family: 'Nunito', sans-serif;
     letter-spacing: -0.3px;
 }
@@ -450,7 +450,7 @@ st.markdown("""
 </div>
 <div class="tc-navbar">
     <div class="tc-logo-icon">↗</div>
-    <div class="tc-logo-name">Splice Report Generator</div>
+    <a href="/" class="tc-logo-name" style="text-decoration:none; cursor:pointer;">Splice Report Generator</a>
     <div class="tc-navbar-spacer"></div>
     <div class="tc-contact-btn">OTDR QC &nbsp; ▸</div>
 </div>
