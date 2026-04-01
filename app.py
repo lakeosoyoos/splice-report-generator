@@ -724,14 +724,41 @@ if st.session_state.get("done"):
         st.markdown("""
         <div class="tc-card">
             <div class="tc-card-title">Cell Label Guide</div>
-            <ul class="tc-list">
-                <li><code>325 .172</code> — A+B confirmed bidirectional loss</li>
-                <li><code>107 broke</code> — fiber terminates mid-span</li>
-                <li><code>107 BREAK .210</code> — 1F reflective break event</li>
-                <li><code>325 .285(A) ~.143bd</code> — A-only, est. bidir below threshold</li>
-                <li><code>325 .285(A) ⚠.143bd</code> — A-only, est. bidir above threshold</li>
-                <li><code>325 .340(B) ⚠.170bd</code> — B-only, est. bidir above threshold</li>
-            </ul>
+            <div style="display:flex; flex-direction:column; gap:7px; margin-top:4px;">
+
+                <div style="background:#FFC7CE; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1a1a1a;">
+                    325 .172 &nbsp;<span style="font-weight:400; font-size:12px;">— A+B bidirectional reburn</span>
+                </div>
+
+                <div style="background:#FF4444; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#ffffff;">
+                    107 BREAK .210 &nbsp;<span style="font-weight:400; font-size:12px;">— 1F reflective break</span>
+                </div>
+
+                <div style="background:#FF8800; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#ffffff;">
+                    107 broke &nbsp;<span style="font-weight:400; font-size:12px;">— trace terminates mid-span</span>
+                </div>
+
+                <div style="background:#BDD7EE; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1F4E79;">
+                    214 .188 (B-fill) &nbsp;<span style="font-weight:400; font-size:12px;">— B-direction past a break</span>
+                </div>
+
+                <div style="background:#FFF2CC; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#7F6000;">
+                    83 .151(A) ~.075bd &nbsp;<span style="font-weight:400; font-size:12px;">— A-only, est. bidir below threshold</span>
+                </div>
+
+                <div style="background:#FFD700; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#4B3000;">
+                    122 .285(A) ⚠.143bd &nbsp;<span style="font-weight:400; font-size:12px;">— A-only, est. bidir above threshold</span>
+                </div>
+
+                <div style="background:#E8D5F5; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#4B0082;">
+                    430 .161(B) ~.081bd &nbsp;<span style="font-weight:400; font-size:12px;">— B-only, est. bidir below threshold</span>
+                </div>
+
+                <div style="background:#C084FC; padding:6px 10px; border-radius:3px; font-family:'Calibri','Carlito',sans-serif; font-size:13px; font-weight:700; color:#1A0033;">
+                    325 .340(B) ⚠.170bd &nbsp;<span style="font-weight:400; font-size:12px;">— B-only, est. bidir above threshold</span>
+                </div>
+
+            </div>
         </div>
         """, unsafe_allow_html=True)
 
