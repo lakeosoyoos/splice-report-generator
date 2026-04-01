@@ -322,7 +322,7 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] small {
     color: #aaa !important;
 }
-/* Fix file uploader — hide duplicate instruction text, keep Upload button */
+/* Fix file uploader — hide instruction text and Add button, keep Upload button only */
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
     display: none !important;
 }
@@ -330,9 +330,13 @@ button[data-testid="stBaseButton-headerNoPadding"],
     justify-content: center !important;
     padding: 8px 0 !important;
 }
-/* Hide Add button once a file is loaded (accept_multiple_files=False) */
+/* Hide entire dropzone instructions + any Add button once file is loaded */
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"]:has([data-testid="stFileUploaderDeleteBtn"])
 [data-testid="stFileUploaderDropzoneInstructions"] {
+    display: none !important;
+}
+/* Hide the small Add button that appears after upload */
+[data-testid="stSidebar"] [data-testid="stFileUploader"] button:not([data-testid="stFileUploaderDeleteBtn"]) {
     display: none !important;
 }
 /* Checkbox label text — transparent background, light text */
