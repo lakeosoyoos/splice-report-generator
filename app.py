@@ -528,6 +528,8 @@ for key in ["xlsx_bytes", "xlsx_name", "summary_data", "log_output", "done"]:
         st.session_state[key] = None
 if "upload_key" not in st.session_state:
     st.session_state.upload_key = 0
+if "downloaded_once" not in st.session_state:
+    st.session_state.downloaded_once = False
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -765,6 +767,8 @@ if run_button and has_a:
     )
     st.session_state.log_output = log_buf.getvalue()
     st.session_state.done       = True
+    # Reset so the auto-download triggers on this fresh report
+    st.session_state.downloaded_once = False
 
     bar.progress(1.0, text="Done!")
     bar.empty()
@@ -775,167 +779,51 @@ if run_button and has_a:
 if st.session_state.get("done"):
     d = st.session_state.summary_data
 
-    # Hero
+    # Compact "Report ready" banner — minimal, just the direction + key numbers
     st.markdown(f"""
-    <div class="tc-hero">
-        <h1>Report Complete<br>{d['site_a']} → {d['site_b']}</h1>
-        <p>{d['n_fibers']} fibers &nbsp;·&nbsp; {d['n_splices']} splice closures
-           &nbsp;·&nbsp; {d['actual_span']} km ({d['actual_span']*3280.84:,.0f} ft)
+    <div class="tc-hero" style="padding-top:24px; padding-bottom:24px;">
+        <h1>Report Ready&nbsp;·&nbsp;{d['site_a']} → {d['site_b']}</h1>
+        <p>{d['n_fibers']} fibers &nbsp;·&nbsp; {d['n_flagged']} flagged events
            &nbsp;·&nbsp; Threshold: {d['threshold']:.3f} dB</p>
     </div>
     """, unsafe_allow_html=True)
 
-    # Stat tiles
-    st.markdown(f"""
-    <div class="tc-stat-row">
-        <div class="tc-stat">
-            <div class="tc-stat-label">Total Flagged</div>
-            <div class="tc-stat-value">{d['n_flagged']}</div>
-            <div class="tc-stat-sub">events requiring attention</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">A+B Reburns</div>
-            <div class="tc-stat-value">{d['n_reburn']}</div>
-            <div class="tc-stat-sub">bidir ≥ {d['threshold']:.3f} dB</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">Breaks</div>
-            <div class="tc-stat-value">{d['n_breaks']}</div>
-            <div class="tc-stat-sub">1F reflective events</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">Broke</div>
-            <div class="tc-stat-value">{d['n_broke']}</div>
-            <div class="tc-stat-sub">mid-span terminations</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">B-fill</div>
-            <div class="tc-stat-value">{d['n_bfill']}</div>
-            <div class="tc-stat-sub">past-break B-direction</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">A-only</div>
-            <div class="tc-stat-value">{d['n_a_only']}</div>
-            <div class="tc-stat-sub">{d['n_a_only_high']} est. bidir high</div>
-        </div>
-        <div class="tc-stat">
-            <div class="tc-stat-label">B-only</div>
-            <div class="tc-stat-value">{d['n_b_only']}</div>
-            <div class="tc-stat-sub">{d['n_b_only_high']} est. bidir high</div>
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("""
-        <div class="tc-card">
-            <div class="tc-card-title">Flagged Event Types</div>
-            <ul class="tc-list">
-                <li><strong>A+B Reburn (pink)</strong> - both directions confirmed, bidir loss >= threshold. Splice needs re-work.</li>
-                <li><strong>Break (red)</strong> - 1F reflective event. Clean cut with glass-to-air Fresnel reflection.</li>
-                <li><strong>Broke (orange)</strong> - trace terminates mid-span with no reflection. Crush or stress fracture.</li>
-                <li><strong>B-fill (blue)</strong> - B-direction loss past a break where A-direction is blind.</li>
-                <li><strong>A-only (yellow/gold)</strong> - A saw it, B event table had no entry. Gold = est. bidir >= threshold.</li>
-                <li><strong>B-only (lavender/purple)</strong> - B saw it, A had no entry. Purple = est. bidir >= threshold.</li>
-            </ul>
-        </div>
-        """, unsafe_allow_html=True)
-
-    with col2:
-        import streamlit.components.v1 as components
-        components.html("""
-        <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
-        <style>
-            * { box-sizing: border-box; margin: 0; padding: 0; }
-            body { background: transparent; font-family: 'Nunito', 'Segoe UI', Arial, sans-serif; }
-            .card {
-                background: #ffffff;
-                border: 1px solid #e5e5e5;
-                border-top: 4px solid #E8461E;
-                border-radius: 4px;
-                padding: 20px 22px 16px 22px;
-                box-shadow: 0 2px 10px rgba(0,0,0,0.05);
-            }
-            .card-title {
-                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
-                font-size: 15px;
-                font-weight: 900;
-                color: #1a1a1a;
-                margin-bottom: 14px;
-                letter-spacing: -0.1px;
-            }
-            .row {
-                display: flex;
-                align-items: center;
-                margin-bottom: 7px;
-            }
-            .sample {
-                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
-                font-size: 11px;
-                font-weight: 700;
-                padding: 2px 7px;
-                border: 1px solid rgba(0,0,0,0.14);
-                white-space: nowrap;
-                width: 148px;
-                flex-shrink: 0;
-            }
-            .desc {
-                font-family: 'Nunito', 'Segoe UI', Arial, sans-serif;
-                font-size: 12px;
-                font-weight: 600;
-                color: #444;
-                padding-left: 12px;
-            }
-        </style>
-        <div class="card">
-            <div class="card-title">Cell Label Guide</div>
-            <div class="row">
-                <div class="sample" style="background:#FFC7CE;color:#1a1a1a;">325 .172</div>
-                <div class="desc">A+B bidirectional reburn</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#FF4444;color:#ffffff;">107 BREAK .210</div>
-                <div class="desc">1F reflective break</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#FF8800;color:#ffffff;">107 broke</div>
-                <div class="desc">trace terminates mid-span</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#BDD7EE;color:#1F4E79;">214 .188 (B-fill)</div>
-                <div class="desc">B-direction past a break</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#FFF2CC;color:#7F6000;">83 .151(A) ~.075bd</div>
-                <div class="desc">A-only, est. bidir below threshold</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#FFD700;color:#4B3000;">122 .285(A) &#9888;.143bd</div>
-                <div class="desc">A-only, est. bidir above threshold</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#E8D5F5;color:#4B0082;">430 .161(B) ~.081bd</div>
-                <div class="desc">B-only, est. bidir below threshold</div>
-            </div>
-            <div class="row">
-                <div class="sample" style="background:#C084FC;color:#1A0033;">325 .340(B) &#9888;.170bd</div>
-                <div class="desc">B-only, est. bidir above threshold</div>
-            </div>
-        </div>
-        """, height=330, scrolling=False)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
+    # Auto-download the Excel file on first render after the report completes,
+    # then fall back to a manual download button in case the browser blocked
+    # the auto-download.
     if st.session_state.xlsx_bytes:
+        import base64
+        import streamlit.components.v1 as components
+
+        just_generated = not st.session_state.get("downloaded_once", False)
+        if just_generated:
+            b64 = base64.b64encode(st.session_state.xlsx_bytes).decode()
+            components.html(f"""
+            <html><body>
+            <a id="auto_dl"
+               href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}"
+               download="{st.session_state.xlsx_name}"></a>
+            <script>
+              // Trigger the download as soon as the component mounts.
+              const link = document.getElementById('auto_dl');
+              if (link) {{ link.click(); }}
+            </script>
+            </body></html>
+            """, height=0)
+            st.session_state.downloaded_once = True
+
+        st.markdown("<br>", unsafe_allow_html=True)
         st.download_button(
-            "⬇  Download Excel Report",
+            "⬇  Download Again",
             st.session_state.xlsx_bytes,
             file_name=st.session_state.xlsx_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             type="primary",
+        )
+        st.caption(
+            "The Excel report downloads automatically when it's ready. "
+            "If your browser blocked the auto-download, use the button above."
         )
 
 
