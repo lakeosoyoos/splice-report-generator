@@ -1,7 +1,7 @@
 """
 Splice Report Generator — Streamlit App
 ========================================
-Bidirectional splice QC report from OTDR SOR files.
+Bidirectional splice QC report from OTDR SOR or JSON files (EXFO FastReporter).
 
 Two-pass analysis:
   Pass 1 — standard bidirectional splice analysis at known splice positions
@@ -560,10 +560,12 @@ with st.sidebar:
             st.caption(f"B: {zip_b.name} ({zip_b.size/1024:.0f} KB)")
 
     else:
-        uploaded_a = st.file_uploader("A-direction SOR files", type=["sor"],
+        uploaded_a = st.file_uploader("A-direction files (.sor or .json)",
+                                      type=["sor", "json"],
                                       accept_multiple_files=True,
                                       key=f"upload_a_{st.session_state.upload_key}")
-        uploaded_b = st.file_uploader("B-direction SOR files (optional)", type=["sor"],
+        uploaded_b = st.file_uploader("B-direction files (.sor or .json, optional)",
+                                      type=["sor", "json"],
                                       accept_multiple_files=True,
                                       key=f"upload_b_{st.session_state.upload_key}")
     if st.button("Clear All", use_container_width=True):
@@ -600,18 +602,21 @@ with st.sidebar:
 
 def detect_sites(dir_a, dir_b=None):
     """
-    Auto-detect site A and B names from the folder name or first SOR filename.
+    Auto-detect site A and B names from the folder name or first SOR/JSON filename.
     e.g. folder 'TULBAR' → ('TUL', 'BAR'), file 'STRROM001.sor' → ('STR', 'ROM')
     Falls back to ('A', 'B') if nothing parseable is found.
     """
     candidates = []
     # Folder name of dir_a
     candidates.append(os.path.basename(os.path.normpath(dir_a)).upper())
-    # First SOR filename in dir_a
+    # First SOR or JSON filename in dir_a
     try:
-        sor_files = sorted([f for f in os.listdir(dir_a) if f.lower().endswith('.sor')])
-        if sor_files:
-            candidates.append(sor_files[0].split('.')[0].split('_')[0].upper())
+        trace_files = sorted([f for f in os.listdir(dir_a)
+                              if f.lower().endswith('.sor') or f.lower().endswith('.json')])
+        if trace_files:
+            # Strip leading alphabetic prefix (e.g. "NEWELM001 .json" → "NEWELM")
+            name = trace_files[0].split('.')[0].split('_')[0].split(' ')[0].upper()
+            candidates.append(name)
     except Exception:
         pass
 
@@ -631,7 +636,9 @@ def detect_sites(dir_a, dir_b=None):
     return 'A', 'B'
 
 
-def stage_files(uploaded, prefix="sor_"):
+def stage_files(uploaded, prefix="trace_"):
+    """Stage uploaded SOR or JSON files into a temp directory.  The script's
+    loader auto-detects file type per directory."""
     tmpdir = tempfile.mkdtemp(prefix=prefix)
     for uf in uploaded:
         with open(os.path.join(tmpdir, uf.name), 'wb') as f:
@@ -639,17 +646,22 @@ def stage_files(uploaded, prefix="sor_"):
     return tmpdir
 
 
-def stage_zip(uploaded_zip, prefix="sor_zip_"):
+def stage_zip(uploaded_zip, prefix="trace_zip_"):
+    """Extract SOR and/or JSON files from an uploaded ZIP into a temp dir."""
     import zipfile
     tmpdir = tempfile.mkdtemp(prefix=prefix)
     with zipfile.ZipFile(io.BytesIO(uploaded_zip.getbuffer()), 'r') as zf:
         for name in zf.namelist():
-            if name.lower().endswith('.sor') and not name.startswith('__MACOSX'):
-                basename = os.path.basename(name)
-                if not basename:
-                    continue
-                with zf.open(name) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
-                    dst.write(src.read())
+            lower = name.lower()
+            if not (lower.endswith('.sor') or lower.endswith('.json')):
+                continue
+            if name.startswith('__MACOSX') or '/.DS_Store' in name:
+                continue
+            basename = os.path.basename(name)
+            if not basename:
+                continue
+            with zf.open(name) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
+                dst.write(src.read())
     return tmpdir
 
 
@@ -674,7 +686,7 @@ if run_button and has_a:
     # Auto-detect site names from folder/filenames
     site_a, site_b = detect_sites(dir_a, dir_b)
 
-    bar     = st.progress(0.0, text="Loading SOR files...")
+    bar     = st.progress(0.0, text="Loading OTDR files (SOR or JSON)...")
     log_buf = io.StringIO()
 
     with redirect_stdout(log_buf):

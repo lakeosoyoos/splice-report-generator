@@ -64,6 +64,13 @@ except ImportError:
     print("ERROR: pip install openpyxl"); sys.exit(1)
 
 from sor_reader324802a import parse_sor_full
+# JSON-based grey-value measurement — matches EXFO's internal LSA calculation
+# (see json_reader.py for the algorithm details)
+from json_reader import (
+    parse_otdr_json,
+    measure_grey_loss_from_json,
+    load_all_json,
+)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -76,37 +83,467 @@ RIBBON_SIZE      = 12      # fibers per ribbon
 POSITION_TOL     = 1.5     # km tolerance for matching A↔B events
 MIN_POP_SPLICE   = 20      # minimum fibers to define a splice position
 END_REGION_KM    = 3.0     # last N km considered "end of fiber"
+LAUNCH_FIBER_MAX = 3.0     # km — max distance for launch connector detection
+
+# Wide-LSA grey-value measurement windows (matches EXFO's FastReporter
+# behavior — see discussion in json_reader.py / previous experiments):
+GREY_LSA_OUTER_M = 5000    # m — outer LSA window on each side of splice
+GREY_LSA_INNER_M = 60      # m — inner dead zone on each side of splice
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  AUTO-DETECT & NORMALIZE UNTRIMMED TRACES
+# ═══════════════════════════════════════════════════════════════════════
+
+def _normalize_untrimmed_events(events):
+    """Detect and normalize events from SOR files where start/stop was not picked.
+
+    Untrimmed pattern (tech did NOT pick start/stop):
+      #1  1F  0.000 km   — OTDR port (instrument origin)
+      #2  1F  ~1.0  km   — launch connector (fiber-under-test starts here)
+      ...  splice events with ~1 km offset  ...
+      #N-1  1F  ~98.3 km — far-end connector (receive fiber)
+      #N    xE  ~99.3 km — end-of-fiber marker
+
+    Trimmed pattern (tech already picked start/stop):
+      #1  1F  0.000 km   — launch connector (already set as origin)
+      ...  splice events at correct positions  ...
+      #N    xE  ~97.2 km — end-of-fiber marker
+
+    Detection: first TWO events are both reflective (1F) non-end events,
+    with the second one at a short distance (< LAUNCH_FIBER_MAX km).
+
+    Normalization:
+      1. Remove event #1 (OTDR port)
+      2. Re-reference all distances from the launch connector (event #2 → dist 0)
+      3. Remove the far-end connector (last 1F within 3 km of the end event)
+    """
+    if len(events) < 3:
+        return events
+
+    # ── Detect untrimmed ──
+    e0, e1 = events[0], events[1]
+    if not (e0['is_reflective'] and not e0['is_end'] and
+            e0['time_of_travel'] == 0 and
+            e1['is_reflective'] and not e1['is_end'] and
+            0 < e1['dist_km'] < LAUNCH_FIBER_MAX):
+        return events  # already trimmed — no-op
+
+    launch_dist = e1['dist_km']
+    launch_travel = e1['time_of_travel']
+
+    # ── Find end-of-fiber event ──
+    end_idx = None
+    for i, e in enumerate(events):
+        if e['is_end']:
+            end_idx = i
+            break
+
+    # ── Find far-end connector: last 1F just before the end event ──
+    far_end_idx = None
+    if end_idx is not None and end_idx > 1:
+        end_dist = events[end_idx]['dist_km']
+        for i in range(end_idx - 1, 0, -1):
+            if events[i]['is_reflective'] and not events[i]['is_end']:
+                if (end_dist - events[i]['dist_km']) < LAUNCH_FIBER_MAX:
+                    far_end_idx = i
+                break  # only check the immediately preceding reflective event
+
+    # ── Compute the adjusted end position ──
+    # When the tech picks start/stop, the end is set at the far-end connector,
+    # not at the trace noise floor beyond the receive fiber.  Mirror that by
+    # moving the end event to the far-end connector position.
+    far_end_norm_dist = None
+    far_end_norm_travel = None
+    if far_end_idx is not None:
+        far_end_norm_dist = round(events[far_end_idx]['dist_km'] - launch_dist, 4)
+        far_end_norm_travel = max(0, events[far_end_idx]['time_of_travel'] - launch_travel)
+
+    # ── Build normalized event list ──
+    normalized = []
+    for i, e in enumerate(events):
+        if i == 0:           # skip OTDR port
+            continue
+        if i == far_end_idx: # skip far-end connector
+            continue
+        new_e = dict(e)
+        new_e['dist_km'] = round(e['dist_km'] - launch_dist, 4)
+        new_e['time_of_travel'] = max(0, e['time_of_travel'] - launch_travel)
+        # Move end event to the far-end connector position (strip receive fiber)
+        if e['is_end'] and far_end_norm_dist is not None:
+            new_e['dist_km'] = far_end_norm_dist
+            new_e['time_of_travel'] = far_end_norm_travel
+        normalized.append(new_e)
+
+    return normalized
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  TRACE-BASED SPAN & BREAK DETECTION
+# ═══════════════════════════════════════════════════════════════════════
+
+# Detection thresholds
+SPIKE_MIN_DB      = 3.0    # minimum dB above baseline for connector spike
+NOISE_STDDEV_THR  = 0.5    # stddev threshold separating signal from noise floor
+BREAK_MEAN_THR    = 58.0   # dB mean threshold for break/saturation
+BREAK_STDDEV_THR  = 1.0    # stddev threshold for noise spike at break
+NOISE_WINDOW      = 50     # samples for sliding window statistics
+
+
+def _sample_to_km(idx, ior, pts, acq_range):
+    """Convert a trace sample index to distance in km."""
+    return idx * 0.02998 * 2 * acq_range / (1000.0 * ior * pts)
+
+
+def _km_to_sample(km, ior, pts, acq_range):
+    """Convert distance in km to a trace sample index."""
+    return int(round(km * 1000.0 * ior * pts / (0.02998 * 2 * acq_range)))
+
+
+def _sliding_stats(trace, window=NOISE_WINDOW):
+    """Compute sliding-window mean and stddev for the trace.
+
+    Returns (means, stds) arrays of same length as trace.
+    Uses a fast cumulative-sum approach.
+    """
+    n = len(trace)
+    means = np.empty(n)
+    stds = np.empty(n)
+    for i in range(n):
+        lo = max(0, i - window)
+        hi = min(n, i + window + 1)
+        seg = trace[lo:hi]
+        means[i] = seg.mean()
+        stds[i] = seg.std()
+    return means, stds
+
+
+def _detect_launch_from_trace(trace, pts, acq_range, ior):
+    """Detect the launch connector from the raw OTDR trace.
+
+    The launch connector creates a dead-zone DIP in the backscatter trace:
+    the strong Fresnel reflection saturates the detector, causing a local
+    minimum at ~0.5-2.0 km.  The fiber-under-test begins after this dip.
+
+    Returns the sample index of the launch connector.
+    """
+    n = len(trace)
+    # Skip the OTDR port dead zone (first ~0.1km) and search 0.1-3.0 km
+    skip = _km_to_sample(0.1, ior, pts, acq_range)
+    search_end = min(_km_to_sample(LAUNCH_FIBER_MAX, ior, pts, acq_range), n - 1)
+
+    if search_end <= skip + 10:
+        return 0
+
+    region = trace[skip:search_end]
+    # The launch connector is at the local minimum (bottom of the dead-zone dip)
+    min_rel = int(np.argmin(region))
+    launch_idx = skip + min_rel
+
+    return launch_idx
+
+
+def _detect_noise_floor_from_trace(trace, launch_idx, pts, acq_range, ior):
+    """Find where the trace transitions from signal to noise floor.
+
+    The OTDR pulse width limits how far the saved trace has clean signal.
+    Beyond this point, the trace goes to saturation (~64 dB) with high noise.
+
+    This is the TRACE noise floor — NOT necessarily the fiber end (the OTDR
+    events extend further due to multi-acquisition).  Used for break detection:
+    if a fiber's trace goes to noise significantly earlier than the population,
+    it likely has a break.
+
+    Returns the sample index where signal transitions to noise.
+    """
+    n = len(trace)
+    step = max(1, NOISE_WINDOW // 2)
+
+    # Scan backward from end to find where clean signal begins
+    for i in range(n - NOISE_WINDOW - 1, launch_idx, -step):
+        seg = trace[i:i + NOISE_WINDOW]
+        if seg.std() < NOISE_STDDEV_THR and seg.mean() < BREAK_MEAN_THR:
+            # Found clean signal — noise floor starts after this
+            noise_start = i + NOISE_WINDOW
+            # Refine forward
+            for j in range(noise_start, min(noise_start + NOISE_WINDOW * 2, n)):
+                seg2 = trace[max(0, j - 10):j + 10]
+                if seg2.std() > NOISE_STDDEV_THR or seg2.mean() > BREAK_MEAN_THR:
+                    return j
+            return noise_start
+
+    return n - 1  # entire trace is noise (shouldn't happen)
+
+
+def _detect_breaks_from_trace(trace, launch_idx, end_idx):
+    """Detect mid-span breaks from the raw trace.
+
+    A break is a sudden jump to near-saturation (>58 dB) with elevated noise,
+    preceded by normal signal (<55 dB, low noise).
+
+    Returns list of sample indices where breaks occur.
+    """
+    breaks = []
+    n = len(trace)
+    w = NOISE_WINDOW
+    i = launch_idx + w
+
+    while i < end_idx - w:
+        seg_after = trace[i:i + w]
+        seg_before = trace[max(launch_idx, i - w):i]
+
+        mean_after = seg_after.mean()
+        mean_before = seg_before.mean()
+        std_after = seg_after.std()
+
+        # Break: signal was present before, saturated after
+        if (mean_before < 55.0 and
+                mean_after > BREAK_MEAN_THR and
+                std_after > BREAK_STDDEV_THR):
+            # Walk backward to find the exact transition sample
+            break_idx = i
+            for j in range(i, max(launch_idx, i - w), -1):
+                if trace[j] < 55.0:
+                    break_idx = j + 1
+                    break
+            breaks.append(break_idx)
+            # Skip past this break region
+            i += w * 4
+            continue
+
+        i += w // 2
+
+    return breaks
+
+
+def _enhance_events_with_trace(fiber_result, expected_span_km, ior=None, pop_noise_floor_km=None):
+    """Enhance a fiber's event list using raw trace analysis.
+
+    Detects the launch connector from the trace (more accurate than events),
+    detects breaks where the trace goes to saturation earlier than expected,
+    and re-normalizes events using the trace-detected offset.
+
+    For end-of-fiber: uses the EVENTS (not the trace) because the OTDR's
+    multi-acquisition events extend further than the single-acquisition
+    saved trace.
+
+    Modifies fiber_result['events'] in place.
+    """
+    trace = fiber_result.get('full_trace')
+    if trace is None:
+        return
+    pts = fiber_result['full_points']
+    acq = fiber_result['acq_range']
+    if ior is None:
+        ior = fiber_result.get('ior', 1.4682)
+
+    events = fiber_result['events']
+
+    # ── Detect if this is an untrimmed file ──
+    is_untrimmed = (len(events) >= 2 and
+                    events[0]['is_reflective'] and not events[0]['is_end'] and
+                    events[0]['time_of_travel'] == 0 and
+                    events[1]['is_reflective'] and not events[1]['is_end'] and
+                    0 < events[1]['dist_km'] < LAUNCH_FIBER_MAX)
+
+    if not is_untrimmed:
+        return  # already trimmed — no trace enhancement needed
+
+    # ── Trace-based launch detection ──
+    launch_idx = _detect_launch_from_trace(trace, pts, acq, ior)
+    launch_km = _sample_to_km(launch_idx, ior, pts, acq)
+
+    # ── Trace-based noise floor detection (for break detection) ──
+    noise_floor_idx = _detect_noise_floor_from_trace(trace, launch_idx, pts, acq, ior)
+    noise_floor_km = _sample_to_km(noise_floor_idx, ior, pts, acq)
+
+    # ── Break detection from trace ──
+    break_indices = _detect_breaks_from_trace(trace, launch_idx, noise_floor_idx)
+    break_kms = [_sample_to_km(bi, ior, pts, acq) for bi in break_indices]
+
+    # ── Compare this fiber's noise floor to the POPULATION noise floor ──
+    # Normal fibers all hit noise at roughly the same distance (pulse width
+    # limit).  A fiber whose trace goes to noise significantly earlier than
+    # the population has a break/broke.
+    trace_span = noise_floor_km - launch_km
+    ref_noise_floor = pop_noise_floor_km if pop_noise_floor_km else expected_span_km
+    is_trace_broke = (ref_noise_floor > 0 and
+                      trace_span < ref_noise_floor - END_REGION_KM)
+
+    # If trace indicates broke but break detector didn't find a specific break,
+    # inject a break at the noise floor transition
+    if is_trace_broke and not break_kms:
+        break_kms.append(noise_floor_km)
+
+    # ── End-of-fiber from EVENTS (not trace) ──
+    # The events come from multi-acquisition and extend further than the saved trace.
+    # Find end event and far-end connector from the event list.
+    end_evt_idx = None
+    for i, e in enumerate(events):
+        if e['is_end']:
+            end_evt_idx = i
+            break
+
+    # Find far-end connector: last 1F before end, close to end
+    far_end_evt_idx = None
+    if end_evt_idx is not None:
+        end_dist = events[end_evt_idx]['dist_km']
+        for i in range(end_evt_idx - 1, 0, -1):
+            if events[i]['is_reflective'] and not events[i]['is_end']:
+                if (end_dist - events[i]['dist_km']) < LAUNCH_FIBER_MAX:
+                    far_end_evt_idx = i
+                break
+
+    # Fiber end = far-end connector position (or end event if no connector found)
+    if far_end_evt_idx is not None:
+        fiber_end_km = events[far_end_evt_idx]['dist_km']
+    elif end_evt_idx is not None:
+        fiber_end_km = events[end_evt_idx]['dist_km']
+    else:
+        fiber_end_km = noise_floor_km
+
+    # ── Re-normalize events ──
+    launch_travel = int(round(launch_idx * 2 * acq / pts))
+
+    normalized = []
+    for i, e in enumerate(events):
+        if i == 0 and e['time_of_travel'] == 0:
+            continue  # skip OTDR port
+        if i == far_end_evt_idx:
+            continue  # skip far-end connector
+        new_e = dict(e)
+        new_e['dist_km'] = round(e['dist_km'] - launch_km, 4)
+        new_e['time_of_travel'] = max(0, e['time_of_travel'] - launch_travel)
+        # Adjust end event to fiber end (far-end connector position)
+        if e['is_end']:
+            new_e['dist_km'] = round(fiber_end_km - launch_km, 4)
+        normalized.append(new_e)
+
+    # ── Inject synthetic break events from trace ──
+    for bk_km in break_kms:
+        bk_norm = round(bk_km - launch_km, 4)
+        if bk_norm < 1.0:
+            continue
+        # Don't inject if there's already an end event before this position
+        existing_end = [ne for ne in normalized if ne['is_end'] and ne['dist_km'] < bk_norm]
+        if existing_end:
+            continue
+
+        # Add a break event (1F reflective with weak Fresnel)
+        normalized.append({
+            'number': 999,
+            'time_of_travel': int(round((bk_km * 1000.0 * ior / 0.02998) * 2)),
+            'dist_km': bk_norm,
+            'splice_loss': 0.0,
+            'reflection': -35.0,
+            'slope': 0.0,
+            'type': '1F9999LS',
+            'is_reflective': True,
+            'is_end': False,
+        })
+        # Remove any end events that are AFTER this break
+        normalized = [ne for ne in normalized if not (ne['is_end'] and ne['dist_km'] > bk_norm)]
+        # Add end event just after the break
+        normalized.append({
+            'number': 1000,
+            'time_of_travel': int(round(((bk_km + 0.1) * 1000.0 * ior / 0.02998) * 2)),
+            'dist_km': round(bk_norm + 0.1, 4),
+            'splice_loss': 0.0,
+            'reflection': 0.0,
+            'slope': 0.0,
+            'type': '0E9999LS',
+            'is_reflective': False,
+            'is_end': True,
+        })
+
+    # Sort by distance
+    normalized.sort(key=lambda e: (e['dist_km'], 0 if not e['is_end'] else 1))
+
+    fiber_result['events'] = normalized
+    fiber_result['_trace_launch_km'] = launch_km
+    fiber_result['_trace_end_km'] = fiber_end_km
+    fiber_result['_trace_noise_floor_km'] = noise_floor_km
+    fiber_result['_trace_breaks'] = break_kms
+    fiber_result['_trace_is_broke'] = is_trace_broke
 
 
 # ═══════════════════════════════════════════════════════════════════════
 #  STEP 1 — Load all fibers
 # ═══════════════════════════════════════════════════════════════════════
 
+def _extract_fiber_num(fn):
+    """Extract fiber number from a SOR/JSON filename (digits only)."""
+    base = fn.split('.')[0].split(' ')[0]  # strip extension and trailing space
+    base = base.split('_')[0]
+    digits = ''.join(c for c in base if c.isdigit())
+    return int(digits) if digits else None
+
+
+def _dir_has_json(d):
+    """True if directory contains any .json files."""
+    if not d or not os.path.isdir(d):
+        return False
+    for fn in os.listdir(d):
+        if fn.lower().endswith('.json'):
+            return True
+    return False
+
+
 def load_all(dir_a, dir_b):
+    """Load fibers from A and B directories.  Each directory can contain
+    either SOR files or EXFO JSON exports — auto-detected per directory.
+    When JSON is available it is preferred (it carries the same trace
+    samples as SOR plus per-event LSA markers, per-section attenuation,
+    and a cleaner event list for grey-value measurement)."""
     fibers_a, fibers_b = {}, {}
 
-    def extract_fiber_num(fn):
-        base = fn.split('.')[0]
-        base = base.split('_')[0]
-        digits = ''.join(c for c in base if c.isdigit())
-        return int(digits) if digits else None
+    def _load_dir(d, out):
+        if not d or not os.path.isdir(d):
+            return
+        use_json = _dir_has_json(d)
+        ext = '.json' if use_json else '.sor'
+        parser = parse_otdr_json if use_json else (lambda p: parse_sor_full(p, trim=False))
+        for fn in sorted(os.listdir(d)):
+            if not fn.lower().endswith(ext):
+                continue
+            try:
+                r = parser(os.path.join(d, fn))
+            except Exception as exc:
+                print(f"  WARN: failed to parse {fn}: {exc}")
+                continue
+            if not r:
+                continue
+            fnum = _extract_fiber_num(fn)
+            if fnum:
+                r['_source'] = 'json' if use_json else 'sor'
+                out[fnum] = r
 
-    for fn in sorted(os.listdir(dir_a)):
-        if not fn.lower().endswith('.sor'): continue
-        r = parse_sor_full(os.path.join(dir_a, fn))
-        if r:
-            fnum = extract_fiber_num(fn)
-            if fnum: fibers_a[fnum] = r
-
-    if dir_b and os.path.isdir(dir_b):
-        for fn in sorted(os.listdir(dir_b)):
-            if not fn.lower().endswith('.sor'): continue
-            r = parse_sor_full(os.path.join(dir_b, fn))
-            if r:
-                fnum = extract_fiber_num(fn)
-                if fnum: fibers_b[fnum] = r
-
+    _load_dir(dir_a, fibers_a)
+    _load_dir(dir_b, fibers_b)
     return fibers_a, fibers_b
+
+
+# ═══════════════════════════════════════════════════════════════════════
+#  Helper: measure grey-value splice loss from a direction's JSON trace
+# ═══════════════════════════════════════════════════════════════════════
+
+def _grey_loss(fiber_data, splice_km):
+    """Return the LSA-measured splice loss at `splice_km` from this fiber's
+    trace, or None if not available (SOR-only data, or trace region bad).
+
+    Uses wide-LSA (±5km outer, ±60m inner) matching EXFO's approach.
+    Only applicable when the fiber was loaded from JSON (the SOR's
+    single-acquisition trace typically saturates past ~34 km and can't
+    support LSA beyond that distance)."""
+    if fiber_data is None:
+        return None
+    if fiber_data.get('_source') != 'json':
+        return None
+    return measure_grey_loss_from_json(
+        fiber_data, splice_km,
+        outer_m=GREY_LSA_OUTER_M,
+        inner_m=GREY_LSA_INNER_M,
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -269,29 +706,56 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                             b_loss = e['splice_loss']
                             b_from_a = ef_from_a
 
-            # ── A-only: no B match ──
-            # B event table had no entry within tolerance — estimate bidir as A/2
+            # ── A event but no B event in table ──
+            # Try to measure the B-direction loss directly from the B trace
+            # using wide-LSA (EXFO's "grey value" approach).  Convert the
+            # splice position to the B-frame (B_dist = B_span - sp_km).
             if b_loss is None:
                 a_loss_abs = abs(ea['splice_loss'])
-                if a_loss_abs / 2.0 >= threshold:
-                    est_bidir = round(a_loss_abs / 2.0, 3)
+                b_grey = None
+                if rb is not None and b_span:
+                    b_frame_km = b_span - sp_km
+                    b_grey = _grey_loss(rb, b_frame_km)
+
+                if b_grey is not None:
+                    # Real bidirectional average using measured B grey
+                    true_bidir = round((ea['splice_loss'] + b_grey) / 2.0, 4)
+
+                    if abs(true_bidir) >= threshold:
+                        # Flag as a normal A+B reburn (pink), with the B value marked as grey
+                        loss_str = f"{abs(true_bidir):.3f}"
+                        if loss_str.startswith('0.'): loss_str = loss_str[1:]
+                        results[(fnum, si)] = {
+                            'fiber': fnum, 'splice_idx': si,
+                            'bidir_loss': true_bidir,
+                            'a_loss': ea['splice_loss'], 'b_loss': b_grey,
+                            'bidir_dist': ea['dist_km'],
+                            'is_break': False, 'is_broke': False,
+                            'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                            'is_flagged': True, 'event_source': 'bidir_grey_b',
+                            'event_type': ea['type'],
+                            'label': f"{fnum} {loss_str}",
+                            '_b_is_grey': True,
+                        }
+                        continue
+
+                    # Below threshold — skip (we only flag if true bidir ≥ threshold)
+                    continue
+
+                # No JSON trace available — fall back to conservative (A alone) check:
+                # flag as A-only if the single-direction loss alone clears threshold
+                if a_loss_abs >= threshold:
                     loss_str = f"{a_loss_abs:.3f}"
                     if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                    est_str = f"{est_bidir:.3f}"
-                    if est_str.startswith('0.'): est_str = est_str[1:]
-                    # Mark whether estimated bidir still exceeds threshold
-                    bidir_flag = '⚠' if est_bidir >= threshold else '~'
                     results[(fnum, si)] = {
                         'fiber': fnum, 'splice_idx': si,
                         'bidir_loss': None, 'a_loss': ea['splice_loss'], 'b_loss': None,
                         'bidir_dist': ea['dist_km'],
-                        'est_bidir': est_bidir,
-                        'est_bidir_flagged': est_bidir >= threshold,
                         'is_break': False, 'is_broke': False,
                         'is_bfill': False, 'is_a_only': True, 'is_b_only': False,
                         'is_flagged': True, 'event_source': 'a_only',
                         'event_type': ea['type'],
-                        'label': f"{fnum} {loss_str}(A) {bidir_flag}{est_str}bd",
+                        'label': f"{fnum} {loss_str} (A)",
                     }
                 continue
 
@@ -309,7 +773,16 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
 
             if is_break:
                 offset_m = round((bidir_dist - sp_km) * 1000, 1)
-                label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_m):.0f}m from splice)"
+                # Include unidirectional loss and reflection dB (like Steven's annotations)
+                uni_loss = abs(ea['splice_loss'])
+                refl_db = ea['reflection']
+                refl_str = f" {uni_loss:.3f} uni reflection {refl_db:.0f}"
+                # Classify break type by reflection level
+                if refl_db > -35.0:
+                    break_type = " air gap"
+                else:
+                    break_type = ""
+                label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_m):.0f}m from splice){refl_str}{break_type}"
             else:
                 loss_str = f"{bidir_loss:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
@@ -370,7 +843,12 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
             b_loss_signed = e['splice_loss']
             b_loss_abs = abs(b_loss_signed)
-            if b_loss_abs / 2.0 < threshold:
+            # Gate: skip clearly-too-small B events.  Use B alone (not B/2)
+            # because the real bidir depends on the A grey value we haven't
+            # measured yet.  Anything with single-dir loss below threshold
+            # can't possibly produce a bidir above threshold unless A grey
+            # is even larger, which is unlikely.
+            if b_loss_abs < threshold * 0.75:
                 continue
 
             # Convert B-frame position to A-frame
@@ -428,27 +906,46 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'label': f"{fnum} {loss_str}",
                 }
             else:
-                # No A event — B-only
-                # A event table had no entry within tolerance — estimate bidir as B/2
-                est_bidir = round(b_loss_abs / 2.0, 3)
-                loss_str = f"{b_loss_abs:.3f}"
-                if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                est_str = f"{est_bidir:.3f}"
-                if est_str.startswith('0.'): est_str = est_str[1:]
-                bidir_flag = '⚠' if est_bidir >= threshold else '~'
-                new_results[(fnum, nearest_si)] = {
-                    'fiber': fnum, 'splice_idx': nearest_si,
-                    'bidir_loss': None,
-                    'a_loss': None, 'b_loss': b_loss_signed,
-                    'bidir_dist': a_frame_km,
-                    'est_bidir': est_bidir,
-                    'est_bidir_flagged': est_bidir >= threshold,
-                    'is_break': False, 'is_broke': False,
-                    'is_bfill': False, 'is_a_only': False, 'is_b_only': True,
-                    'is_flagged': True, 'event_source': 'b_only',
-                    'event_type': e['type'],
-                    'label': f"{fnum} {loss_str}(B) {bidir_flag}{est_str}bd",
-                }
+                # B event but no A event in table — measure the A-direction
+                # loss at this position from the A JSON trace (grey value).
+                a_grey = _grey_loss(ra, a_frame_km) if ra is not None else None
+
+                if a_grey is not None:
+                    true_bidir = round((a_grey + b_loss_signed) / 2.0, 4)
+                    if abs(true_bidir) < threshold:
+                        continue
+                    loss_str = f"{abs(true_bidir):.3f}"
+                    if loss_str.startswith('0.'): loss_str = loss_str[1:]
+                    new_results[(fnum, nearest_si)] = {
+                        'fiber': fnum, 'splice_idx': nearest_si,
+                        'bidir_loss': true_bidir,
+                        'a_loss': a_grey, 'b_loss': b_loss_signed,
+                        'bidir_dist': a_frame_km,
+                        'is_break': False, 'is_broke': False,
+                        'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                        'is_flagged': True, 'event_source': 'bidir_grey_a',
+                        'event_type': e['type'],
+                        'label': f"{fnum} {loss_str}",
+                        '_a_is_grey': True,
+                    }
+                    continue
+
+                # No JSON trace — fall back to single-direction check (B alone
+                # ≥ threshold, which is conservative but honest)
+                if b_loss_abs >= threshold:
+                    loss_str = f"{b_loss_abs:.3f}"
+                    if loss_str.startswith('0.'): loss_str = loss_str[1:]
+                    new_results[(fnum, nearest_si)] = {
+                        'fiber': fnum, 'splice_idx': nearest_si,
+                        'bidir_loss': None,
+                        'a_loss': None, 'b_loss': b_loss_signed,
+                        'bidir_dist': a_frame_km,
+                        'is_break': False, 'is_broke': False,
+                        'is_bfill': False, 'is_a_only': False, 'is_b_only': True,
+                        'is_flagged': True, 'event_source': 'b_only',
+                        'event_type': e['type'],
+                        'label': f"{fnum} {loss_str} (B)",
+                    }
 
     return new_results
 
@@ -512,14 +1009,28 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices):
                 loss_abs = abs(raw_loss) if raw_loss is not None else 0
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str} (A)")
+                # Show estimated bidir value (like Steven's "bidi .173" annotation)
+                est_bd = g['res'].get('est_bidir')
+                if est_bd is not None:
+                    bd_str = f"{est_bd:.3f}"
+                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
+                    parts.append(f"{fib_str} {loss_str} (A) bidi {bd_str}")
+                else:
+                    parts.append(f"{fib_str} {loss_str} (A)")
             elif g['is_b_only']:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 raw_loss = g['res']['b_loss']
                 loss_abs = abs(raw_loss) if raw_loss is not None else 0
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str} (B)")
+                # Show estimated bidir value
+                est_bd = g['res'].get('est_bidir')
+                if est_bd is not None:
+                    bd_str = f"{est_bd:.3f}"
+                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
+                    parts.append(f"{fib_str} {loss_str} (B) bidi {bd_str}")
+                else:
+                    parts.append(f"{fib_str} {loss_str} (B)")
             elif g.get('is_bfill'):
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
@@ -749,16 +1260,48 @@ def main():
     ap.add_argument('--threshold', type=float, default=REBURN_THRESHOLD,
                     help=f'Flag threshold in dB (default {REBURN_THRESHOLD})')
     ap.add_argument('--ribbon-size', type=int, default=RIBBON_SIZE)
-    ap.add_argument('--site-a', default='TUL')
-    ap.add_argument('--site-b', default='BAR')
+    ap.add_argument('--site-a', default=None,
+                    help='A-end site name (auto-detected from directory names if not set)')
+    ap.add_argument('--site-b', default=None,
+                    help='B-end site name (auto-detected from directory names if not set)')
     ap.add_argument('--span-km', type=float, default=0,
                     help='Span distance in km (0 = auto-detect)')
     args = ap.parse_args()
+
+    # ── Auto-detect site names from directory names ──
+    # Directory names like "NEWELM 15 sec" encode the route as site_a + site_b
+    # A-direction dir = A→B (e.g., NEWELM = from NEW to ELM)
+    # B-direction dir = B→A (e.g., ELMNEW = from ELM to NEW)
+    if args.site_a is None or args.site_b is None:
+        import re
+        a_base = os.path.basename(args.dir_a.rstrip('/'))
+        # Extract the alphabetic prefix (e.g., "NEWELM" from "NEWELM 15 sec")
+        alpha = re.match(r'([A-Za-z]+)', a_base)
+        if alpha:
+            route_str = alpha.group(1).upper()
+            # Try to split into two 3-letter site codes (e.g., NEWELM → NEW + ELM)
+            if len(route_str) >= 6:
+                half = len(route_str) // 2
+                if args.site_a is None:
+                    args.site_a = route_str[:half]
+                if args.site_b is None:
+                    args.site_b = route_str[half:]
+                print(f"  Auto-detected site names: {args.site_a} → {args.site_b}")
+        if args.site_a is None:
+            args.site_a = 'A'
+        if args.site_b is None:
+            args.site_b = 'B'
 
     print("Loading SOR files...")
     fibers_a, fibers_b = load_all(args.dir_a, args.dir_b)
     n_fibers = max(fibers_a.keys()) if fibers_a else 0
     print(f"  A: {len(fibers_a)} fibers   B: {len(fibers_b)} fibers   max fiber #{n_fibers}")
+
+    # ── Pass 0: Normalize events for splice discovery ──
+    # Save original events (needed for trace enhancement), normalize copies
+    for r in list(fibers_a.values()) + list(fibers_b.values()):
+        r['_raw_events'] = r['events']  # save originals
+        r['events'] = _normalize_untrimmed_events(r['events'])
 
     print("Discovering splice closure positions...")
     splices = discover_splices(fibers_a)
@@ -766,7 +1309,7 @@ def main():
     for i, sp in enumerate(splices, 1):
         print(f"    Splice {i:2d}: {sp['position_km']:8.2f} km  ({sp['count']} fibers)")
 
-    # Auto-detect span
+    # Auto-detect span (preliminary, from normalized events)
     span_km = args.span_km
     if span_km == 0:
         all_ends = sorted([e['dist_km'] for r in fibers_a.values()
@@ -774,6 +1317,60 @@ def main():
         if all_ends:
             top_quarter = all_ends[int(len(all_ends) * 0.75):]
             span_km = round(np.median(top_quarter), 2)
+
+    # ── Trace-based enhancement: detect breaks and refine span from raw trace ──
+    # Restore original events so trace enhancement can detect untrimmed files
+    for r in list(fibers_a.values()) + list(fibers_b.values()):
+        r['events'] = r.pop('_raw_events')
+
+    n_trace_breaks = 0
+    n_trace_enhanced = 0
+    has_trace_data = any(r.get('full_trace') is not None for r in fibers_a.values())
+    if has_trace_data:
+        print(f"\nTrace analysis: detecting breaks and span boundaries from raw trace...")
+
+        # Phase 1: detect noise floors for all fibers to get population baseline
+        all_noise_floors = []
+        for r in list(fibers_a.values()) + list(fibers_b.values()):
+            trace = r.get('full_trace')
+            if trace is None:
+                continue
+            pts = r['full_points']
+            acq = r['acq_range']
+            ior_val = r.get('ior', 1.4682)
+            launch_idx = _detect_launch_from_trace(trace, pts, acq, ior_val)
+            nf_idx = _detect_noise_floor_from_trace(trace, launch_idx, pts, acq, ior_val)
+            nf_km = _sample_to_km(nf_idx, ior_val, pts, acq)
+            launch_km = _sample_to_km(launch_idx, ior_val, pts, acq)
+            all_noise_floors.append(nf_km - launch_km)
+
+        if all_noise_floors:
+            pop_noise_floor = np.median(sorted(all_noise_floors)[int(len(all_noise_floors)*0.75):])
+            print(f"  Population trace noise floor: {pop_noise_floor:.1f} km from launch")
+        else:
+            pop_noise_floor = span_km
+
+        # Phase 2: enhance events using population noise floor as reference
+        for fnum, r in fibers_a.items():
+            _enhance_events_with_trace(r, span_km, pop_noise_floor_km=pop_noise_floor)
+            if r.get('_trace_breaks'):
+                n_trace_breaks += len(r['_trace_breaks'])
+            if r.get('_trace_launch_km') is not None:
+                n_trace_enhanced += 1
+        for fnum, r in fibers_b.items():
+            _enhance_events_with_trace(r, span_km, pop_noise_floor_km=pop_noise_floor)
+            if r.get('_trace_breaks'):
+                n_trace_breaks += len(r['_trace_breaks'])
+        print(f"  Enhanced {n_trace_enhanced} A-fibers, {n_trace_breaks} breaks detected from trace")
+
+        # Re-compute span after trace enhancement (use events, not trace)
+        if args.span_km == 0:
+            all_ends = sorted([e['dist_km'] for r in fibers_a.values()
+                               for e in r['events'] if e['is_end']])
+            if all_ends:
+                top_quarter = all_ends[int(len(all_ends) * 0.75):]
+                span_km = round(np.median(top_quarter), 2)
+
     print(f"  Span: {span_km} km ({span_km * 3280.84:,.0f} ft)")
 
     print(f"\nPass 1: Analyzing {len(fibers_a)} fibers at {len(splices)} splice positions "
