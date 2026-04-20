@@ -22,7 +22,8 @@ import numpy as np
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from splicereportmatchexfo import (
-    load_all, discover_splices, analyze_all, scan_b_events,
+    load_all, discover_splices, refine_closure_centers, detect_launch_issues,
+    analyze_all, scan_b_events,
     build_ribbon_data, write_xlsx,
     REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
 )
@@ -698,7 +699,15 @@ if run_button and has_a:
 
     with redirect_stdout(log_buf):
         splices = discover_splices(fibers_a)
-    bar.progress(0.30, text=f"Found {len(splices)} splice closures...")
+        splices = refine_closure_centers(fibers_a, splices)
+    bar.progress(0.25, text=f"Found {len(splices)} splice closures...")
+
+    # Launch-issue detection (before any event normalisation that might strip
+    # details from the launch area)
+    bar.progress(0.30, text="Detecting launch-end issues...")
+    first_splice_km = splices[0]['position_km'] if splices else None
+    with redirect_stdout(log_buf):
+        launch_issues = detect_launch_issues(fibers_a, fibers_b, first_splice_km)
 
     actual_span = 0
     if actual_span == 0:
@@ -720,39 +729,56 @@ if run_button and has_a:
 
     # ── Apply event-type filters from sidebar ──────────────────────────────
     def _included(r):
+        # Bends are always included — they're a distinct category from the sidebar options
+        if r.get('is_bend'): return True
         if r.get('is_break')  and not st.session_state.get('inc_break',  True): return False
         if r.get('is_broke')  and not st.session_state.get('inc_broke',  True): return False
         if r.get('is_bfill')  and not st.session_state.get('inc_bfill',  True): return False
         if r.get('is_a_only') and not st.session_state.get('inc_a_only', True): return False
         if r.get('is_b_only') and not st.session_state.get('inc_b_only', True): return False
-        # bidir reburn = not break, not broke, not bfill, not a_only, not b_only
-        is_reburn = (r.get('event_source') == 'bidir'
+        is_reburn = (r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
                      and not r.get('is_break') and not r.get('is_broke')
+                     and not r.get('is_bend')
                      and not r.get('is_bfill') and not r.get('is_a_only')
                      and not r.get('is_b_only'))
         if is_reburn and not st.session_state.get('inc_reburn', True): return False
         return True
     all_results = {k: v for k, v in all_results.items() if _included(v)}
 
-    n_reburn      = sum(1 for r in all_results.values() if r.get('event_source') == 'bidir' and not r['is_break'])
+    n_reburn      = sum(1 for r in all_results.values()
+                        if r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
+                        and not r['is_break'] and not r.get('is_bend'))
     n_breaks      = sum(1 for r in all_results.values() if r['is_break'])
     n_broke       = sum(1 for r in all_results.values() if r['is_broke'])
     n_bfill       = sum(1 for r in all_results.values() if r.get('is_bfill', False))
+    n_bend        = sum(1 for r in all_results.values() if r.get('is_bend', False))
+    n_bend_high   = sum(1 for r in all_results.values()
+                        if r.get('is_bend') and r.get('bend_severity') == 'HIGH')
+    n_bend_review = sum(1 for r in all_results.values()
+                        if r.get('is_bend') and r.get('bend_severity') == 'REVIEW')
+    n_bend_watch  = sum(1 for r in all_results.values()
+                        if r.get('is_bend') and r.get('bend_severity') == 'WATCH')
     n_a_only      = sum(1 for r in all_results.values() if r.get('is_a_only', False))
     n_b_only      = sum(1 for r in all_results.values() if r.get('is_b_only', False))
     n_b_only_high = sum(1 for r in all_results.values() if r.get('is_b_only') and r.get('est_bidir_flagged'))
     n_a_only_high = sum(1 for r in all_results.values() if r.get('is_a_only') and r.get('est_bidir_flagged'))
+    n_launch      = len(launch_issues)
+    n_launch_high = sum(1 for v in launch_issues.values() if v.get('severity') == 'HIGH')
 
     bar.progress(0.80, text="Building ribbon grid...")
     with redirect_stdout(log_buf):
-        cells = build_ribbon_data(all_results, n_fibers, ribbon_size, len(splices))
+        cells, launch_cells_a, launch_cells_b = build_ribbon_data(
+            all_results, n_fibers, ribbon_size, len(splices),
+            launch_issues=launch_issues,
+        )
 
     bar.progress(0.92, text="Writing Excel report...")
     xlsx_dir  = tempfile.mkdtemp(prefix="splice_xlsx_")
     xlsx_path = os.path.join(xlsx_dir, "splice_report.xlsx")
     with redirect_stdout(log_buf):
         write_xlsx(cells, splices, n_fibers, ribbon_size, xlsx_path,
-                   site_a, site_b, actual_span)
+                   site_a, site_b, actual_span,
+                   launch_cells_a=launch_cells_a, launch_cells_b=launch_cells_b)
 
     with open(xlsx_path, 'rb') as f:
         st.session_state.xlsx_bytes = f.read()
@@ -763,6 +789,9 @@ if run_button and has_a:
         n_reburn=n_reburn, n_breaks=n_breaks, n_broke=n_broke,
         n_bfill=n_bfill, n_a_only=n_a_only, n_a_only_high=n_a_only_high,
         n_b_only=n_b_only, n_b_only_high=n_b_only_high,
+        n_bend=n_bend, n_bend_high=n_bend_high,
+        n_bend_review=n_bend_review, n_bend_watch=n_bend_watch,
+        n_launch=n_launch, n_launch_high=n_launch_high,
         site_a=site_a, site_b=site_b,
     )
     st.session_state.log_output = log_buf.getvalue()
