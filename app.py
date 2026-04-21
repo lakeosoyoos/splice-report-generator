@@ -594,7 +594,7 @@ with st.sidebar:
     ribbon_size = RIBBON_SIZE
 
     # ── Bend thresholds ───────────────────────────────────────────────
-    with st.expander("Bend thresholds", expanded=False):
+    with st.expander("Bend thresholds", expanded=True):
         bend_threshold = st.number_input(
             "Bend minimum loss (dB)",
             value=BEND_THRESHOLD,
@@ -609,7 +609,7 @@ with st.sidebar:
         )
 
     # ── Launch / connector thresholds ─────────────────────────────────
-    with st.expander("Launch / connector thresholds", expanded=False):
+    with st.expander("Launch / connector thresholds", expanded=True):
         launch_high_loss = st.number_input(
             "High launch loss threshold (dB)",
             value=LAUNCH_HIGH_LOSS_DB,
@@ -637,7 +637,7 @@ with st.sidebar:
         )
 
     # ── Gainer / Loser thresholds (for locating launch connector) ─────
-    with st.expander("Gainer / Loser event thresholds", expanded=False):
+    with st.expander("Gainer / Loser event thresholds", expanded=True):
         use_gl = st.checkbox("Enable gainer / loser detection", value=False,
                              help="Tag unusually negative (gainer) or positive (loser) events in the launch zone.")
         gainer_threshold = st.number_input(
