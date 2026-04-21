@@ -26,6 +26,9 @@ from splicereportmatchexfo import (
     analyze_all, scan_b_events,
     build_ribbon_data, write_xlsx,
     REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
+    BEND_THRESHOLD, CLOSURE_MATCH_KM,
+    LAUNCH_IMMEDIATE_END_KM, LAUNCH_HIGH_LOSS_DB, LAUNCH_BAD_REFL_DB,
+    LAUNCH_FIBER_MAX,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -581,9 +584,78 @@ with st.sidebar:
     st.divider()
     st.markdown("## Settings")
 
-    threshold   = st.number_input("Bidirectional threshold (dB, 0.15=auto)", value=REBURN_THRESHOLD,
-                                  format="%.3f", step=0.01)
+    # ── Splice reburn ─────────────────────────────────────────────────
+    threshold   = st.number_input(
+        "Bidirectional reburn threshold (dB)",
+        value=REBURN_THRESHOLD,
+        format="%.3f", step=0.01,
+        help="Pink A+B reburn if bidirectional loss ≥ this value at a closure."
+    )
     ribbon_size = RIBBON_SIZE
+
+    # ── Bend thresholds ───────────────────────────────────────────────
+    with st.expander("Bend thresholds", expanded=False):
+        bend_threshold = st.number_input(
+            "Bend minimum loss (dB)",
+            value=BEND_THRESHOLD,
+            format="%.3f", step=0.005,
+            help="Any event ≥ this magnitude offset from a closure is tagged BEND.",
+        )
+        closure_match_m = st.number_input(
+            "Bend offset from closure (m)",
+            value=int(CLOSURE_MATCH_KM * 1000), step=25, min_value=10,
+            help=("Events more than this far from the true closure center are "
+                  "tagged BEND.  Smaller = stricter (more bends flagged)."),
+        )
+
+    # ── Launch / connector thresholds ─────────────────────────────────
+    with st.expander("Launch / connector thresholds", expanded=False):
+        launch_high_loss = st.number_input(
+            "High launch loss threshold (dB)",
+            value=LAUNCH_HIGH_LOSS_DB,
+            format="%.2f", step=0.1,
+            help="Launch-connector loss at or above this value flags the fiber.",
+        )
+        launch_immediate_end = st.number_input(
+            "Immediate-end distance (km)",
+            value=LAUNCH_IMMEDIATE_END_KM,
+            format="%.1f", step=0.5, min_value=0.1,
+            help="Fibers that end within this distance of launch are flagged (fiber never launched).",
+        )
+        launch_bad_refl = st.number_input(
+            "Bad launch reflectance (dB)",
+            value=LAUNCH_BAD_REFL_DB,
+            format="%.1f", step=0.5,
+            help=("Launch reflectance WORSE than (greater than) this value flags the "
+                  "fiber.  Typical good launch is ≈ −50 dB."),
+        )
+        launch_fiber_max = st.number_input(
+            "Launch fiber max distance (km)",
+            value=LAUNCH_FIBER_MAX,
+            format="%.1f", step=0.5, min_value=0.1,
+            help="Scan depth from 0 km for launch connector / gainer-loser detection.",
+        )
+
+    # ── Gainer / Loser thresholds (for locating launch connector) ─────
+    with st.expander("Gainer / Loser event thresholds", expanded=False):
+        use_gl = st.checkbox("Enable gainer / loser detection", value=False,
+                             help="Tag unusually negative (gainer) or positive (loser) events in the launch zone.")
+        gainer_threshold = st.number_input(
+            "Gainer threshold (dB, negative)",
+            value=-0.500, format="%.3f", step=0.05,
+            help=("Events with loss ≤ this value count as gainers (apparent gain). "
+                  "Typical MFD-mismatch / hot APC connector gainers are −0.3 to −0.8 dB."),
+        )
+        loser_threshold = st.number_input(
+            "Loser threshold (dB)",
+            value=0.500, format="%.3f", step=0.05,
+            help=("Events with loss ≥ this value count as abnormal losers.  "
+                  "Useful for finding dirty / damaged launch connectors."),
+        )
+        if not use_gl:
+            # Disabled: pass None so detect_launch_issues skips the gainer/loser check
+            gainer_threshold = None
+            loser_threshold = None
 
     st.markdown("**Include in Report**")
     col_chk1, col_chk2 = st.columns(2)
@@ -707,7 +779,15 @@ if run_button and has_a:
     bar.progress(0.30, text="Detecting launch-end issues...")
     first_splice_km = splices[0]['position_km'] if splices else None
     with redirect_stdout(log_buf):
-        launch_issues = detect_launch_issues(fibers_a, fibers_b, first_splice_km)
+        launch_issues = detect_launch_issues(
+            fibers_a, fibers_b, first_splice_km,
+            immediate_end_km=launch_immediate_end,
+            high_loss_db=launch_high_loss,
+            bad_refl_db=launch_bad_refl,
+            gainer_threshold=gainer_threshold,
+            loser_threshold=loser_threshold,
+            launch_fiber_max_km=launch_fiber_max,
+        )
 
     actual_span = 0
     if actual_span == 0:
@@ -718,12 +798,21 @@ if run_button and has_a:
             actual_span = round(np.median(top_q), 2)
 
     bar.progress(0.45, text=f"Pass 1: {n_fibers} fibers × {len(splices)} splice positions...")
+    closure_match_km = closure_match_m / 1000.0
     with redirect_stdout(log_buf):
-        results = analyze_all(fibers_a, fibers_b, splices, threshold)
+        results = analyze_all(
+            fibers_a, fibers_b, splices, threshold,
+            bend_threshold=bend_threshold,
+            closure_match_km=closure_match_km,
+        )
 
     bar.progress(0.65, text="Pass 2: scanning B-direction for missed events...")
     with redirect_stdout(log_buf):
-        b_results = scan_b_events(fibers_a, fibers_b, splices, threshold, results, actual_span)
+        b_results = scan_b_events(
+            fibers_a, fibers_b, splices, threshold, results, actual_span,
+            bend_threshold=bend_threshold,
+            closure_match_km=closure_match_km,
+        )
 
     all_results = {**results, **b_results}
 

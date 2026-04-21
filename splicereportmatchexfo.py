@@ -688,21 +688,77 @@ def refine_closure_centers(fibers_a, splices):
     return splices
 
 
-def _is_bend_event(event_pos_km, splice_center_km, loss):
+def _is_bend_event(event_pos_km, splice_center_km, loss,
+                   bend_threshold=None, closure_match_km=None):
     """Apply ZeroDBIFTHEN Flag-3 rule: an event is a BEND if its loss is
-    above BEND_THRESHOLD AND its position is more than CLOSURE_MATCH_KM
-    away from the splice closure center."""
-    if abs(loss) < BEND_THRESHOLD:
+    above `bend_threshold` AND its position is more than `closure_match_km`
+    away from the splice closure center.
+
+    When the threshold kwargs are None, fall back to module defaults —
+    this keeps historical callers working unchanged."""
+    bt = BEND_THRESHOLD if bend_threshold is None else bend_threshold
+    cm = CLOSURE_MATCH_KM if closure_match_km is None else closure_match_km
+    if abs(loss) < bt:
         return False
-    return abs(event_pos_km - splice_center_km) > CLOSURE_MATCH_KM
+    return abs(event_pos_km - splice_center_km) > cm
 
 
-def _bend_severity(loss):
-    if abs(loss) >= BEND_HIGH_LOSS:
-        return 'HIGH'
-    if abs(loss) >= BEND_REVIEW_LOSS:
-        return 'REVIEW'
+def _bend_severity(loss, high_loss=None, review_loss=None):
+    hi  = BEND_HIGH_LOSS   if high_loss   is None else high_loss
+    rev = BEND_REVIEW_LOSS if review_loss is None else review_loss
+    if abs(loss) >= hi:  return 'HIGH'
+    if abs(loss) >= rev: return 'REVIEW'
     return 'WATCH'
+
+
+def _is_gainer(loss, gainer_threshold=None):
+    """An event is a 'gainer' if its loss is more negative (larger apparent
+    gain) than the given threshold.  Gainers near the launch help locate the
+    launch connector (connectors + MFD-mismatched splices both show as
+    large gainers from one direction)."""
+    if gainer_threshold is None:
+        return False
+    return loss <= gainer_threshold
+
+
+def _is_loser(loss, loser_threshold=None):
+    """An event is an abnormal 'loser' if its loss exceeds the loser
+    threshold.  Large losers near the launch often signal the connector."""
+    if loser_threshold is None:
+        return False
+    return loss >= loser_threshold
+
+
+def detect_launch_connector_km(r, gainer_threshold=None, loser_threshold=None,
+                               launch_fiber_max_km=LAUNCH_FIBER_MAX):
+    """Estimate the km position of the launch connector for a single fiber.
+
+    Scans events up to `launch_fiber_max_km` and returns the position of
+    the strongest gainer/loser event (whichever has the largest |loss|)
+    matching the supplied thresholds.  Falls back to the position of the
+    first reflective event near 0 km, or None if neither is found.
+
+    The "trace really starts" just past the returned km."""
+    events = (r or {}).get('events') or []
+    # Prefer gainer/loser hits if thresholds are provided
+    candidates = []
+    for e in events:
+        if e.get('is_end') or e['dist_km'] > launch_fiber_max_km:
+            continue
+        loss = e.get('splice_loss') or 0.0
+        if _is_gainer(loss, gainer_threshold) or _is_loser(loss, loser_threshold):
+            candidates.append((abs(loss), e['dist_km']))
+    if candidates:
+        candidates.sort(reverse=True)
+        return candidates[0][1]
+
+    # Fallback: the first reflective event near 0 km
+    for e in events:
+        if e.get('is_end'):
+            continue
+        if e.get('is_reflective') and e['dist_km'] < launch_fiber_max_km:
+            return e['dist_km']
+    return None
 
 
 def _format_loss(val):
@@ -732,16 +788,36 @@ def _fiber_launch_info(r):
     return launch_evt, end_km, len(events)
 
 
-def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
+def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
+                         immediate_end_km=None,
+                         high_loss_db=None,
+                         bad_refl_db=None,
+                         gainer_threshold=None,
+                         loser_threshold=None,
+                         launch_fiber_max_km=None):
     """Return {fiber_num: launch_issue_dict} for every fiber that has a
     launch-end problem in either direction.
 
-    launch_issue_dict has:
-      a_tags : list[str]   — issue tags for A direction (empty if none)
-      b_tags : list[str]   — issue tags for B direction
+    All thresholds default to the module-level constants when not supplied
+    (so existing callers keep working).  Pass values through from the
+    Streamlit UI to make the thresholds user-tunable.
+
+    Optional gainer/loser thresholds also tag fibers whose launch region
+    contains an unusually negative (gainer) or positive (loser) event —
+    useful for pinpointing launch-connector position.
+
+    launch_issue_dict fields:
+      a_tags : list[str]
+      b_tags : list[str]
       severity : 'HIGH' | 'REVIEW' | 'WATCH'
-      summary : str        — human-readable label for the cell
+      summary : str
+      a_launch_km / b_launch_km : float | None — estimated launch connector km
     """
+    imm_end_km = LAUNCH_IMMEDIATE_END_KM if immediate_end_km is None else immediate_end_km
+    high_loss  = LAUNCH_HIGH_LOSS_DB    if high_loss_db    is None else high_loss_db
+    bad_refl   = LAUNCH_BAD_REFL_DB     if bad_refl_db     is None else bad_refl_db
+    lf_max_km  = LAUNCH_FIBER_MAX       if launch_fiber_max_km is None else launch_fiber_max_km
+
     # Population medians
     def _gather_launch_refls(fibers):
         refls = []
@@ -764,9 +840,8 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
 
         def _check(r, tags, pop_median_refl, dir_is_A):
             """Flag ONLY severe launch-end issues — the kind where the fiber
-            silently disappears from the splice report.  We deliberately skip
-            soft signals like 'NO_FIRST_SPLICE' (too noisy; many fibers have
-            sub-threshold splices that don't get detected)."""
+            silently disappears from the splice report.  Also tags gainer /
+            loser events inside the launch window if thresholds provided."""
             if r is None:
                 tags.append('FILE_MISSING')
                 return
@@ -778,17 +853,29 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
                 return
 
             # Fiber terminates at/near launch — effectively no launched fiber
-            if end_km is not None and end_km < LAUNCH_IMMEDIATE_END_KM:
+            if end_km is not None and end_km < imm_end_km:
                 tags.append(f'IMMEDIATE_END@{end_km:.2f}km')
 
             # High-loss launch connector
             if launch_evt is not None:
                 launch_loss = abs(launch_evt.get('splice_loss') or 0.0)
-                if launch_loss >= LAUNCH_HIGH_LOSS_DB:
+                if launch_loss >= high_loss:
                     tags.append(f'HIGH_LAUNCH_LOSS{launch_loss:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
-                if refl > LAUNCH_BAD_REFL_DB:
+                if refl > bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
+
+            # Gainer / loser event detection inside the launch window
+            # (helps pinpoint the launch connector position)
+            if gainer_threshold is not None or loser_threshold is not None:
+                for e in r.get('events') or []:
+                    if e.get('is_end') or e['dist_km'] > lf_max_km:
+                        continue
+                    loss = e.get('splice_loss') or 0.0
+                    if _is_gainer(loss, gainer_threshold):
+                        tags.append(f'LAUNCH_GAINER{loss:+.2f}dB@{e["dist_km"]:.2f}km')
+                    elif _is_loser(loss, loser_threshold):
+                        tags.append(f'LAUNCH_LOSER{loss:+.2f}dB@{e["dist_km"]:.2f}km')
 
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
         _check(rb, b_tags, b_refl_median, dir_is_A=False)
@@ -797,12 +884,14 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
             continue
 
         # Severity: HIGH for immediate-end / no-events / high-launch-loss,
-        # REVIEW for missing-file / bad-refl, WATCH for only outlier / no-first.
+        # REVIEW for bad-refl or large gainers/losers, WATCH otherwise.
         all_tags = a_tags + b_tags
         is_high = any(t.startswith(('IMMEDIATE_END', 'NO_EVENTS',
                                     'HIGH_LAUNCH_LOSS', 'FILE_MISSING'))
                       for t in all_tags)
-        is_review = any(t.startswith(('BAD_LAUNCH_REFL',)) for t in all_tags)
+        is_review = any(t.startswith(('BAD_LAUNCH_REFL',
+                                      'LAUNCH_GAINER', 'LAUNCH_LOSER'))
+                        for t in all_tags)
         severity = 'HIGH' if is_high else ('REVIEW' if is_review else 'WATCH')
 
         # Build a compact one-line summary (first 1–2 issue tags)
@@ -810,11 +899,19 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
         dir_label = 'A' if a_tags else 'B'
         summary = f"{fnum} LAUNCH({dir_label}) {primary}"
 
+        # Estimated launch-connector km (if gainer/loser thresholds set)
+        a_launch_km = detect_launch_connector_km(
+            ra, gainer_threshold, loser_threshold, lf_max_km)
+        b_launch_km = detect_launch_connector_km(
+            rb, gainer_threshold, loser_threshold, lf_max_km)
+
         issues[fnum] = {
             'a_tags': a_tags,
             'b_tags': b_tags,
             'severity': severity,
             'summary': summary,
+            'a_launch_km': a_launch_km,
+            'b_launch_km': b_launch_km,
         }
 
     return issues
@@ -825,7 +922,8 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
 #           (identical logic to splice_report_generator.py, plus A-only flagging)
 # ═══════════════════════════════════════════════════════════════════════
 
-def analyze_all(fibers_a, fibers_b, splices, threshold):
+def analyze_all(fibers_a, fibers_b, splices, threshold,
+                bend_threshold=None, closure_match_km=None):
     """
     Pass 1: For each fiber at each known splice closure position:
       - Find A event → find matching B event → compute bidir loss → flag if above threshold
@@ -964,7 +1062,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                     # Real bidirectional average using measured B grey
                     true_bidir = round((ea['splice_loss'] + b_grey) / 2.0, 4)
                     closure_center_km = sp.get('position_km_refined', sp_km)
-                    is_bend = _is_bend_event(ea['dist_km'], closure_center_km, true_bidir)
+                    is_bend = _is_bend_event(ea['dist_km'], closure_center_km, true_bidir, bend_threshold=bend_threshold, closure_match_km=closure_match_km)
 
                     if abs(true_bidir) >= threshold or is_bend:
                         loss_str = _format_loss(true_bidir)
@@ -998,7 +1096,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                 if a_loss_abs >= threshold:
                     loss_str = _format_loss(a_loss_abs)
                     closure_center_km = sp.get('position_km_refined', sp_km)
-                    is_bend = _is_bend_event(ea['dist_km'], closure_center_km, ea['splice_loss'])
+                    is_bend = _is_bend_event(ea['dist_km'], closure_center_km, ea['splice_loss'], bend_threshold=bend_threshold, closure_match_km=closure_match_km)
                     if is_bend:
                         offset_m = round((ea['dist_km'] - closure_center_km) * 1000, 0)
                         label = f"{fnum} BEND {loss_str}(A) ({offset_m:+.0f}m)"
@@ -1034,7 +1132,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             # splice reburn.  Use the refined (mode-based) center, falling
             # back to the coarse position_km if refinement hasn't run.
             closure_center_km = sp.get('position_km_refined', sp_km)
-            is_bend = (not is_break) and _is_bend_event(ea['dist_km'], closure_center_km, bidir_loss)
+            is_bend = (not is_break) and _is_bend_event(ea['dist_km'], closure_center_km, bidir_loss, bend_threshold=bend_threshold, closure_match_km=closure_match_km)
 
             is_flagged = (abs(bidir_loss) >= threshold) or is_break or is_bend
             if not is_flagged:
@@ -1081,7 +1179,8 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
 #  STEP 4 — Pass 2: Scan all B-direction events not caught in Pass 1
 # ═══════════════════════════════════════════════════════════════════════
 
-def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, total_span_a):
+def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, total_span_a,
+                  bend_threshold=None, closure_match_km=None):
     """
     Pass 2: For every B-direction event above threshold that was NOT already
     caught in Pass 1, find the nearest splice position (within 1.5 km) and report it.
@@ -1166,7 +1265,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
             if a_evt is not None:
                 # A event exists — compute bidirectional
                 bidir = round((a_evt['splice_loss'] + b_loss_signed) / 2.0, 4)
-                is_bend = _is_bend_event(a_frame_km, closure_center_km, bidir)
+                is_bend = _is_bend_event(a_frame_km, closure_center_km, bidir, bend_threshold=bend_threshold, closure_match_km=closure_match_km)
                 if abs(bidir) < threshold and not is_bend:
                     continue
                 loss_str = _format_loss(bidir)
@@ -1196,7 +1295,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
                 if a_grey is not None:
                     true_bidir = round((a_grey + b_loss_signed) / 2.0, 4)
-                    is_bend = _is_bend_event(a_frame_km, closure_center_km, true_bidir)
+                    is_bend = _is_bend_event(a_frame_km, closure_center_km, true_bidir, bend_threshold=bend_threshold, closure_match_km=closure_match_km)
                     if abs(true_bidir) < threshold and not is_bend:
                         continue
                     loss_str = _format_loss(true_bidir)
@@ -1225,7 +1324,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                 # No JSON trace — fall back to single-direction check (B alone
                 # ≥ threshold, which is conservative but honest)
                 if b_loss_abs >= threshold:
-                    is_bend = _is_bend_event(a_frame_km, closure_center_km, b_loss_signed)
+                    is_bend = _is_bend_event(a_frame_km, closure_center_km, b_loss_signed, bend_threshold=bend_threshold, closure_match_km=closure_match_km)
                     loss_str = _format_loss(b_loss_abs)
                     if is_bend:
                         offset_m = round((a_frame_km - closure_center_km) * 1000, 0)
