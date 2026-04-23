@@ -53,8 +53,8 @@ CELL LABELS:
 
 COLORS:
   Pink   — A+B bidirectional reburn (loss >= threshold)
-  Red    — Break (1F reflective, clean cut)
-  Orange — Broke (fiber terminates mid-span, crush/stress fracture)
+  Red    — Break / Broke (both treated as physical damage; reflective
+            break or non-reflective crush both render with the red fill)
   Blue   — B-fill (B-direction loss past a break, A-direction blind)
   Yellow — A-only (A saw it, B did not)
   Purple — B-only (B saw it, A did not)
@@ -1839,7 +1839,10 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     red_fill    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")   # A+B reburn
     break_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # break
     break_font  = Font(bold=True, size=8, color="FFFFFF")
-    broke_fill  = PatternFill(start_color="FF8800", end_color="FF8800", fill_type="solid")   # broke
+    # April 23 revision: BROKE is now rendered the same as BREAK — both are
+    # physical damage where the fiber has lost transmission.  Same red fill,
+    # same white bold text, same category in the tech's eye.
+    broke_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # red
     broke_font  = Font(bold=True, size=8, color="FFFFFF")
     bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")   # B-fill past break
     bfill_font  = Font(size=8, color="1F4E79")
@@ -2009,7 +2012,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     legend_items = [
         ("Pink",       "FFC7CE", "000000", "A+B — Bidirectional reburn: both directions confirmed, bidir loss >= threshold. Needs re-splice."),
         ("Red",        "FF4444", "FFFFFF", "Break — 1F reflective event (clean cut, glass-to-air Fresnel reflection). label: 'BREAK'"),
-        ("Orange",     "FF8800", "FFFFFF", "Broke — fiber trace terminates mid-span, no reflection (crush / stress fracture). label: 'broke'"),
+        ("Red (broke)","FF4444", "FFFFFF", "Broke — fiber trace terminates mid-span (crush / stress fracture).  Rendered with the same red fill as a break; label reads 'broke' or 'BREAK' depending on reflective vs non-reflective signature."),
         ("Blue",       "BDD7EE", "1F4E79", "B-fill — B-direction loss used past a break where A-direction is blind. label: '(B-fill)'"),
         ("Lt. Yellow", "FFF2CC", "7F6000", "A-only, est bidir OK — A saw it, no B entry. Estimated bidir (A/2) is below threshold. label: 'F# .xxx(A) ~.xxxbd'"),
         ("Gold",       "FFD700", "4B3000", "A-only, est bidir HIGH — A saw it, no B entry. Estimated bidir (A/2) still exceeds threshold. label: 'F# .xxx(A) ⚠.xxxbd'"),
@@ -2290,7 +2293,7 @@ def main():
     print(f"  ──────────────────────────────────")
     print(f"  A+B reburns:  {n_reburn}  (pink)   — both directions, bidir >= threshold, near closure center")
     print(f"  Breaks:       {n_breaks}  (red)    — 1F reflective event")
-    print(f"  Broke:        {n_broke}  (orange) — trace terminates mid-span")
+    print(f"  Broke:        {n_broke}  (red)    — trace terminates mid-span (same red fill as break)")
     print(f"  B-fill:       {n_bfill}  (blue)   — B-direction past a break")
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
     print(f"  B-only:       {n_b_only}  (purple) — B saw it, A did not  ← EXFO extra")
