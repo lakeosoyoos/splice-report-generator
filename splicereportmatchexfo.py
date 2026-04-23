@@ -1032,6 +1032,24 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
             b_end = [e for e in rb['events'] if e['is_end']]
             b_span = b_end[0]['dist_km'] if b_end else total_span_b
 
+        # ── Per-fiber B-fill coverage / dead-zone pre-compute ──
+        # If this fiber is A-broken and B also has a premature end/break,
+        # there may be a stretch of cable that neither trace could see.
+        _fiber_end_a = eof_a.get(fnum, 999)
+        _fiber_is_a_broken = (0 < _fiber_end_a < total_span_a - END_REGION_KM)
+        # B-fill reach = nearest-to-A-launch A-frame km that the B trace
+        # can see.  B fiber sees from B-launch (A-frame = total_span_a) back
+        # through b_span of fiber, so the furthest-back A-frame position it
+        # reaches is (total_span_a - b_span).
+        _b_fill_reach_km = None
+        _dead_zone = None  # (lo_km, hi_km) in A-frame, both ends inclusive
+        if _fiber_is_a_broken and b_span and total_span_a:
+            _b_fill_reach_km = max(0.0, total_span_a - b_span)
+            # If B's reach stops SHORT of the A-break (i.e., reach > break),
+            # there's a gap between them that neither trace saw.
+            if _b_fill_reach_km > _fiber_end_a + 0.2:
+                _dead_zone = (_fiber_end_a, _b_fill_reach_km)
+
         for si, sp in enumerate(splices):
             sp_km = sp['position_km']
             # A column may be a real splice ('splice') or a bend / damage zone
@@ -1055,14 +1073,26 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                                      key=lambda i: abs(splices[i]['position_km'] - fiber_end))
                 nearest_dist = abs(splices[nearest_splice]['position_km'] - fiber_end)
                 if nearest_splice == si and nearest_dist < 2.0:
+                    # Enrich label with B-fill coverage / dead-zone range
+                    if _dead_zone is not None:
+                        _broke_label = (f"{fnum} broke@{fiber_end:.1f}k | "
+                                        f"DZ {_dead_zone[0]:.1f}-"
+                                        f"{_dead_zone[1]:.1f}k")
+                    elif _b_fill_reach_km is not None:
+                        _broke_label = f"{fnum} broke@{fiber_end:.1f}k (B-fill OK)"
+                    else:
+                        _broke_label = f"{fnum} broke"
                     results[(fnum, si)] = {
                         'fiber': fnum, 'splice_idx': si,
                         'bidir_loss': None, 'a_loss': None, 'b_loss': None,
                         'bidir_dist': fiber_end,
                         'is_break': False, 'is_broke': True, 'is_bend': False,
-                        'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                        'is_bfill': False, 'is_dead_zone': False,
+                        'is_a_only': False, 'is_b_only': False,
                         'is_flagged': True, 'event_source': 'broke',
-                        'event_type': 'BROKE', 'label': f"{fnum} broke",
+                        'event_type': 'BROKE', 'label': _broke_label,
+                        'dead_zone_km': _dead_zone,
+                        'b_fill_reach_km': _b_fill_reach_km,
                     }
                 # B-fill for splices past the break
                 elif sp_km > fiber_end and rb and b_span:
@@ -1084,11 +1114,31 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
                                 'b_loss': b_evt['splice_loss'],
                                 'bidir_dist': b_span - b_evt['dist_km'],
                                 'is_break': False, 'is_broke': False, 'is_bend': False,
-                                'is_bfill': True, 'is_a_only': False, 'is_b_only': False,
+                                'is_bfill': True, 'is_dead_zone': False,
+                                'is_a_only': False, 'is_b_only': False,
                                 'is_flagged': True, 'event_source': 'bfill',
                                 'event_type': b_evt['type'],
                                 'label': f"{fnum} {loss_str} (B)",
                             }
+                    elif (_dead_zone is not None and
+                          _dead_zone[0] < sp_km < _dead_zone[1]):
+                        # Column falls inside the dead zone for this fiber —
+                        # neither A (past its break) nor B (past its own
+                        # break) can see it.  Mark so the tech knows this
+                        # splice was unobservable for this fiber.
+                        results[(fnum, si)] = {
+                            'fiber': fnum, 'splice_idx': si,
+                            'bidir_loss': None, 'a_loss': None, 'b_loss': None,
+                            'bidir_dist': sp_km,
+                            'is_break': False, 'is_broke': False, 'is_bend': False,
+                            'is_bfill': False, 'is_dead_zone': True,
+                            'is_a_only': False, 'is_b_only': False,
+                            'is_flagged': False, 'event_source': 'dead_zone',
+                            'event_type': 'DEAD_ZONE',
+                            'label': f"{fnum} DZ",
+                            'dead_zone_km': _dead_zone,
+                            'b_fill_reach_km': _b_fill_reach_km,
+                        }
                 continue
 
             # ── Find A event near this splice ──
@@ -1679,6 +1729,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                     'is_broke': res['is_broke'],
                     'is_bend':  res.get('is_bend', False),
                     'is_bfill': res.get('is_bfill', False),
+                    'is_dead_zone': res.get('is_dead_zone', False),
                     'is_a_only': res.get('is_a_only', False),
                     'is_b_only': res.get('is_b_only', False),
                     'event_source': res.get('event_source', 'bidir'),
@@ -1689,8 +1740,13 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
         # Build cell text — label shows source for A-only and B-only
         parts = []
         for g in groups:
-            if g['is_broke']:
-                parts.append(f"{g['fibers'][0]} broke")
+            if g.get('is_dead_zone'):
+                # Collapse multi-fiber dead zones into "F1,F2,... DZ"
+                fib_str = ','.join(str(f) for f in g['fibers'])
+                parts.append(f"{fib_str} DZ")
+            elif g['is_broke']:
+                # Use the enriched broke label (includes position + DZ range)
+                parts.append(g['label'])
             elif g['is_break']:
                 parts.append(g['label'])
             elif g.get('is_bend'):
@@ -1763,12 +1819,15 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
 
         max_loss = max((g['loss'] for g in groups if g['loss'] is not None), default=0)
 
+        is_dead_zone = any(g.get('is_dead_zone', False) for g in groups)
+
         cells[(ri, si)] = {
             'text': cell_text,
             'is_break': is_break,
             'is_broke': is_broke,
             'is_bend':  is_bend,
             'is_bfill': is_bfill,
+            'is_dead_zone': is_dead_zone,
             'is_a_only': is_a_only,
             'is_b_only': is_b_only,
             'est_bidir_flagged': est_bidir_flagged,
@@ -1852,6 +1911,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     broke_font  = Font(bold=True, size=8, color="FFFFFF")
     bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")   # B-fill past break
     bfill_font  = Font(size=8, color="1F4E79")
+    dz_fill     = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")   # dead zone (gray)
+    dz_font     = Font(size=8, italic=True, color="3F3F3F")
     aonly_fill  = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")   # A-only (yellow, est bidir OK)
     aonly_font  = Font(size=8, color="7F6000")
     aonly_fill2 = PatternFill(start_color="FFD700", end_color="FFD700", fill_type="solid")   # A-only (gold, est bidir >= threshold)
@@ -1991,6 +2052,9 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                 elif cd.get('is_bfill'):
                     cell.fill = bfill_fill
                     cell.font = bfill_font
+                elif cd.get('is_dead_zone'):
+                    cell.fill = dz_fill
+                    cell.font = dz_font
                 elif cd.get('is_b_only'):
                     if cd.get('est_bidir_flagged'):
                         cell.fill = bonly_fill2
@@ -2018,6 +2082,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Red",        "FF4444", "FFFFFF", "Break — 1F reflective event (clean cut, glass-to-air Fresnel reflection). label: 'BREAK'"),
         ("Red (broke)","FF4444", "FFFFFF", "Broke — fiber trace terminates mid-span (crush / stress fracture).  Rendered with the same red fill as a break; label reads 'broke' or 'BREAK' depending on reflective vs non-reflective signature."),
         ("Blue",       "BDD7EE", "1F4E79", "B-fill — B-direction loss used past a break where A-direction is blind. label: '(B-fill)'"),
+        ("Gray",       "BFBFBF", "3F3F3F", "Dead zone — fiber broke on A side AND B trace also ends before reaching the A-break. Neither trace could see this splice for this fiber. Broke cell shows 'F# broke@XXk | DZ lo-hi k'; affected columns show 'F# DZ'."),
         ("Lt. Yellow", "FFF2CC", "7F6000", "A-only, est bidir OK — A saw it, no B entry. Estimated bidir (A/2) is below threshold. label: 'F# .xxx(A) ~.xxxbd'"),
         ("Gold",       "FFD700", "4B3000", "A-only, est bidir HIGH — A saw it, no B entry. Estimated bidir (A/2) still exceeds threshold. label: 'F# .xxx(A) ⚠.xxxbd'"),
         ("Lavender",   "E8D5F5", "4B0082", "B-only, est bidir OK — B saw it, no A entry. Estimated bidir (B/2) is below threshold. label: 'F# .xxx(B) ~.xxxbd'"),
@@ -2261,6 +2326,9 @@ def main():
     n_breaks  = sum(1 for r in all_results.values() if r['is_break'])
     n_broke   = sum(1 for r in all_results.values() if r['is_broke'])
     n_bfill   = sum(1 for r in all_results.values() if r.get('is_bfill'))
+    n_dz      = sum(1 for r in all_results.values() if r.get('is_dead_zone'))
+    n_dz_fibers = len({r['fiber'] for r in all_results.values()
+                       if r['is_broke'] and r.get('dead_zone_km')})
     n_reburn  = n_bidir - n_breaks
 
     # Bend severity breakdown
@@ -2297,6 +2365,7 @@ def main():
     print(f"  Breaks:       {n_breaks}  (red)    — 1F reflective event")
     print(f"  Broke:        {n_broke}  (red)    — trace terminates mid-span (same red fill as break)")
     print(f"  B-fill:       {n_bfill}  (blue)   — B-direction past a break")
+    print(f"  Dead zone:    {n_dz}  (gray)   — neither trace could see; {n_dz_fibers} broken fibers have a dead zone")
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
     print(f"  B-only:       {n_b_only}  (purple) — B saw it, A did not  ← EXFO extra")
     print(f"  Bends:        {n_bend}  (yellow) — event >= {BEND_THRESHOLD:.3f} dB, > 150 m from closure center")
