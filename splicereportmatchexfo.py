@@ -129,8 +129,12 @@ GREY_LSA_INNER_M = 60      # m — inner dead zone on each side of splice
 #
 BEND_THRESHOLD        = 0.090   # dB — minimum loss to call an event a "bend"
 CLOSURE_MATCH_KM      = 0.150   # km — tight window; farther → classify as bend
-BEND_HIGH_LOSS        = 0.250   # dB — HIGH severity bend
-BEND_REVIEW_LOSS      = 0.150   # dB — REVIEW severity bend
+# Severity tiers intentionally collapsed: any bend ≥ BEND_THRESHOLD is
+# rendered with the same yellow fill.  The old WATCH / REVIEW / HIGH
+# tiers are retained as constants only for backward-compatibility with
+# any downstream code that still references them.
+BEND_HIGH_LOSS        = BEND_THRESHOLD
+BEND_REVIEW_LOSS      = BEND_THRESHOLD
 # Histogram bin for the mode-based closure-center refinement:
 CLOSURE_MODE_BIN_M    = 25      # m — bin width for position-mode histogram
 CLOSURE_MODE_WINDOW_M = 75      # m — window around mode peak for median refinement
@@ -851,11 +855,8 @@ def _is_bend_event(event_pos_km, splice_center_km, loss):
 
 
 def _bend_severity(loss):
-    if abs(loss) >= BEND_HIGH_LOSS:
-        return 'HIGH'
-    if abs(loss) >= BEND_REVIEW_LOSS:
-        return 'REVIEW'
-    return 'WATCH'
+    # Severity tiers collapsed — every bend ≥ BEND_THRESHOLD is simply 'BEND'.
+    return 'BEND'
 
 
 def _format_loss(val):
@@ -1855,13 +1856,16 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     bonly_fill2 = PatternFill(start_color="C084FC", end_color="C084FC", fill_type="solid")   # B-only (purple, est bidir >= threshold)
     bonly_font2 = Font(bold=True, size=8, color="1A0033")
     # BEND: teal / cyan — clearly distinct from splice colors so bends stand out
-    # BEND cells are shaded yellow (matches the tech's yellow-highlight style
-    # on Cle Elum).  Three yellow severity shades keep the tier info visible.
-    bend_fill_watch  = PatternFill(start_color="FFF59D", end_color="FFF59D", fill_type="solid")  # WATCH (0.090–0.150 dB)
-    bend_fill_review = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")  # REVIEW (0.150–0.250 dB)
-    bend_fill_high   = PatternFill(start_color="F9A825", end_color="F9A825", fill_type="solid")  # HIGH (>= 0.250 dB)
+    # BEND cells: single yellow fill for every bend (no severity shading).
+    # Matches the tech's yellow-highlight style on Cle Elum.
+    bend_fill        = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     bend_font        = Font(bold=True, size=8, color="5D4037")
-    bend_font_high   = Font(bold=True, size=8, color="4E342E")
+    # Keep the old three-name aliases pointing at the single fill so any
+    # downstream reference still resolves.  bend_font_high is just bend_font.
+    bend_fill_watch  = bend_fill
+    bend_fill_review = bend_fill
+    bend_fill_high   = bend_fill
+    bend_font_high   = bend_font
     # LAUNCH ISSUE: fuchsia / magenta — warns the tech a fiber had launch-end
     # trouble (broken at launch, damaged connector, truncated event table)
     launch_fill_high   = PatternFill(start_color="C0185F", end_color="C0185F", fill_type="solid")  # HIGH
@@ -1903,9 +1907,9 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     ws.cell(row=3, column=2).fill = hdr_fill
     # Alternate fill colors for phantom (bend / damage) column headers so they
     # stand out from the blue splice headers at a glance.
-    # Bend-column header: yellow (matches the yellow bend cells beneath it).
+    # Bend-column header: same yellow as the bend cells beneath it.
     # Damage-column header: red (matches the red break/broke cells beneath).
-    hdr_fill_bend   = PatternFill(start_color="F9A825", end_color="F9A825", fill_type="solid")
+    hdr_fill_bend   = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     hdr_fill_damage = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")
     for si, sp in enumerate(splices):
         col = si + 3
@@ -1977,18 +1981,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                     cell.fill = broke_fill
                     cell.font = broke_font
                 elif cd.get('is_bend'):
-                    # Pick bend color by max severity among its bend groups —
-                    # yellow shaded, dark text for readability on every shade.
-                    ml = cd.get('max_loss') or 0
-                    if abs(ml) >= BEND_HIGH_LOSS:
-                        cell.fill = bend_fill_high
-                        cell.font = bend_font_high
-                    elif abs(ml) >= BEND_REVIEW_LOSS:
-                        cell.fill = bend_fill_review
-                        cell.font = bend_font
-                    else:
-                        cell.fill = bend_fill_watch
-                        cell.font = bend_font
+                    cell.fill = bend_fill
+                    cell.font = bend_font
                 elif cd.get('is_bfill'):
                     cell.fill = bfill_fill
                     cell.font = bfill_font
@@ -2023,9 +2017,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Gold",       "FFD700", "4B3000", "A-only, est bidir HIGH — A saw it, no B entry. Estimated bidir (A/2) still exceeds threshold. label: 'F# .xxx(A) ⚠.xxxbd'"),
         ("Lavender",   "E8D5F5", "4B0082", "B-only, est bidir OK — B saw it, no A entry. Estimated bidir (B/2) is below threshold. label: 'F# .xxx(B) ~.xxxbd'"),
         ("Purple",     "C084FC", "1A0033", "B-only, est bidir HIGH — B saw it, no A entry. Estimated bidir (B/2) still exceeds threshold. label: 'F# .xxx(B) ⚠.xxxbd'"),
-        ("Yellow Lt",  "FFF59D", "5D4037", "BEND (WATCH) — event ≥ 0.090 dB at a position more than 150 m from the closure center; bidir loss < 0.150 dB."),
-        ("Yellow",     "FFEB3B", "5D4037", "BEND (REVIEW) — bend-offset event with bidir loss 0.150–0.250 dB.  Inspect conduit for pinch or tight bend."),
-        ("Amber",      "F9A825", "4E342E", "BEND (HIGH)   — bend-offset event with bidir loss ≥ 0.250 dB.  Likely kinked conduit / crushed section."),
+        ("Yellow",     "FFEB3B", "5D4037", "BEND — event ≥ 0.090 dB at a position more than 150 m from the closure center.  Inspect conduit for pinch or tight bend."),
         ("Pink-Lt",    "F8BBD0", "880E4F", "LAUNCH (WATCH) — launch-end anomaly: reflectance outlier or missed first splice.  Appears in ILA column."),
         ("Pink-Md",    "E91E63", "FFFFFF", "LAUNCH (REVIEW) — bad launch reflectance (weaker than expected).  Check launch connector."),
         ("Pink-Dk",    "C0185F", "FFFFFF", "LAUNCH (HIGH) — fiber broken at launch / high launch loss / file missing.  Fiber would otherwise be SILENT in the report."),
@@ -2302,7 +2294,7 @@ def main():
     print(f"  B-fill:       {n_bfill}  (blue)   — B-direction past a break")
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
     print(f"  B-only:       {n_b_only}  (purple) — B saw it, A did not  ← EXFO extra")
-    print(f"  Bends:        {n_bend}  (yellow) — event >= {BEND_THRESHOLD:.3f} dB, > 150 m from closure center  (HIGH={n_bend_high}, REVIEW={n_bend_review}, WATCH={n_bend_watch})")
+    print(f"  Bends:        {n_bend}  (yellow) — event >= {BEND_THRESHOLD:.3f} dB, > 150 m from closure center")
     print(f"  Launch:       {len(launch_issues)}  (fuchsia) — launch-end issues (HIGH={high_n}, REVIEW={review_n}, WATCH={watch_n})")
     print(f"  ──────────────────────────────────")
     print(f"  Total:        {n_total}")
