@@ -27,7 +27,7 @@ from splicereportmatchexfo import (
     build_ribbon_data, write_xlsx,
     REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
     BEND_THRESHOLD, CLOSURE_MATCH_KM,
-    LAUNCH_IMMEDIATE_END_KM, LAUNCH_HIGH_LOSS_DB, LAUNCH_BAD_REFL_DB,
+    LAUNCH_HIGH_LOSS_DB, LAUNCH_BAD_REFL_DB,
     LAUNCH_FIBER_MAX,
 )
 
@@ -681,18 +681,13 @@ with st.sidebar:
             format="%.2f", step=0.1,
             help="Launch-connector loss at or above this value flags the fiber.",
         )
-        launch_immediate_end = st.number_input(
-            "Immediate-end distance (km)",
-            value=LAUNCH_IMMEDIATE_END_KM,
-            format="%.1f", step=0.5, min_value=0.1,
-            help="Fibers that end within this distance of launch are flagged (fiber never launched).",
-        )
         launch_bad_refl = st.number_input(
             "Bad launch reflectance (dB)",
             value=LAUNCH_BAD_REFL_DB,
             format="%.1f", step=0.5,
-            help=("Launch reflectance WORSE than (greater than) this value flags the "
-                  "fiber.  Typical good launch is ≈ −50 dB."),
+            help=("Launch reflectance WORSE than (greater than) this value flags "
+                  "the fiber.  Default -70 dB flags any reflection in the "
+                  "0 to -70 dB range."),
         )
         launch_fiber_max = st.number_input(
             "Launch fiber max distance (km)",
@@ -858,7 +853,6 @@ if run_button and has_a:
     with redirect_stdout(log_buf):
         launch_issues = detect_launch_issues(
             fibers_a, fibers_b, first_splice_km,
-            immediate_end_km=launch_immediate_end,
             high_loss_db=launch_high_loss,
             bad_refl_db=launch_bad_refl,
             gainer_threshold=gainer_threshold,

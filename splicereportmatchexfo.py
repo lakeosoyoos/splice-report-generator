@@ -177,10 +177,10 @@ CLOSURE_VALID_MEDIAN_LOSS_MAX = 0.100   # dB — median loss inside the tight
 # at known closures) nor Pass 2 (B-direction scan) has anything to match on.
 # These fibers need to be flagged on their own so the tech knows to go look.
 #
-LAUNCH_IMMEDIATE_END_KM      = 2.0    # fiber end within N km of launch → issue
-LAUNCH_HIGH_LOSS_DB          = 1.0    # launch connector loss above this → issue
-LAUNCH_BAD_REFL_DB           = -15.0  # launch reflectance WORSE than this → issue
-                                      #   (less-negative = weaker reflection)
+LAUNCH_HIGH_LOSS_DB          = 3.0    # launch connector loss >= this dB → issue
+LAUNCH_BAD_REFL_DB           = -70.0  # launch reflectance WORSE than this → issue
+                                      #   (flags refl in the 0 to -70 dB range;
+                                      #    less-negative = weaker reflection)
 LAUNCH_REFL_OUTLIER_DB       = 10.0   # |fiber_refl − population_median| > this → issue
 LAUNCH_NO_FIRST_SPLICE_TOL_KM = 2.0   # km — must see an event within this of the
                                       #      first population closure
@@ -886,9 +886,16 @@ def _fiber_launch_info(r):
     return launch_evt, end_km, len(events)
 
 
-def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
+def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
+                          high_loss_db=None, bad_refl_db=None,
+                          **_ignored):
     """Return {fiber_num: launch_issue_dict} for every fiber that has a
     launch-end problem in either direction.
+
+    Optional overrides (used by the Streamlit sidebar):
+      high_loss_db  — launch-connector loss >= this flags HIGH_LAUNCH_LOSS
+      bad_refl_db   — launch reflectance > this flags BAD_LAUNCH_REFL
+    Any other kwargs are accepted and ignored for forward-compat.
 
     launch_issue_dict has:
       a_tags : list[str]   — issue tags for A direction (empty if none)
@@ -896,6 +903,8 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
       severity : 'HIGH' | 'REVIEW' | 'WATCH'
       summary : str        — human-readable label for the cell
     """
+    hi_loss = LAUNCH_HIGH_LOSS_DB if high_loss_db is None else float(high_loss_db)
+    bad_refl = LAUNCH_BAD_REFL_DB if bad_refl_db is None else float(bad_refl_db)
     # Population medians
     def _gather_launch_refls(fibers):
         refls = []
@@ -931,17 +940,13 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
                 tags.append('NO_EVENTS')
                 return
 
-            # Fiber terminates at/near launch — effectively no launched fiber
-            if end_km is not None and end_km < LAUNCH_IMMEDIATE_END_KM:
-                tags.append(f'IMMEDIATE_END@{end_km:.2f}km')
-
             # High-loss launch connector
             if launch_evt is not None:
                 launch_loss = abs(launch_evt.get('splice_loss') or 0.0)
-                if launch_loss >= LAUNCH_HIGH_LOSS_DB:
+                if launch_loss >= hi_loss:
                     tags.append(f'HIGH_LAUNCH_LOSS{launch_loss:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
-                if refl > LAUNCH_BAD_REFL_DB:
+                if refl > bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
 
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
@@ -953,7 +958,7 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None):
         # Severity: HIGH for immediate-end / no-events / high-launch-loss,
         # REVIEW for missing-file / bad-refl, WATCH for only outlier / no-first.
         all_tags = a_tags + b_tags
-        is_high = any(t.startswith(('IMMEDIATE_END', 'NO_EVENTS',
+        is_high = any(t.startswith(('NO_EVENTS',
                                     'HIGH_LAUNCH_LOSS', 'FILE_MISSING'))
                       for t in all_tags)
         is_review = any(t.startswith(('BAD_LAUNCH_REFL',)) for t in all_tags)
