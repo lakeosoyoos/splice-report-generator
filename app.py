@@ -835,8 +835,20 @@ if run_button and has_a:
     bar.progress(0.15, text=f"Loaded {len(fibers_a)} A + {len(fibers_b)} B fibers...")
 
     with redirect_stdout(log_buf):
-        splices = discover_splices(fibers_a)
-        splices = refine_closure_centers(fibers_a, splices)
+        splice_candidates = discover_splices(fibers_a)
+        real_splices, phantom_zones = refine_closure_centers(
+            fibers_a, splice_candidates, return_phantoms=True)
+        # Interleave phantom bend/damage zones between the real splices in
+        # position order — mirrors the tech's Cle Elum layout.
+        splices = sorted(
+            list(real_splices) + list(phantom_zones),
+            key=lambda sp: sp.get('position_km_refined', sp['position_km']),
+        )
+        splice_display_num = 0
+        for sp in splices:
+            if sp.get('column_kind') == 'splice':
+                splice_display_num += 1
+                sp['splice_display_num'] = splice_display_num
     bar.progress(0.25, text=f"Found {len(splices)} splice closures...")
 
     # Launch-issue detection (before any event normalisation that might strip
