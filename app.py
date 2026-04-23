@@ -275,9 +275,18 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
     flex-shrink: 0;
 }
 
-/* ── Sidebar ─────────────────────────────────────────────────── */
+/* ── Sidebar — WHITE BACKGROUND + BLACK TEXT (tech's request) ─── */
+[data-testid="stSidebar"],
+[data-testid="stSidebar"] *,
+[data-testid="stSidebar"] > div,
+[data-testid="stSidebar"] section,
+[data-testid="stSidebar"] [data-testid="stExpander"],
+[data-testid="stSidebar"] details,
+[data-testid="stSidebar"] details > summary,
+[data-testid="stSidebar"] [data-testid="stExpanderDetails"] {
+    background-color: #ffffff !important;
+}
 [data-testid="stSidebar"] {
-    background-color: #1C2526 !important;
     border-right: 3px solid #E8461E !important;
     width: 620px !important;
     min-width: 620px !important;
@@ -288,7 +297,7 @@ html, body, [class*="css"], .stMarkdown, p, label, span, div {
     width: 620px !important;
 }
 
-/* ── Hide sidebar collapse button (removes keyboard double) ──── */
+/* Hide sidebar collapse button */
 [data-testid="stSidebarCollapseButton"],
 [data-testid="collapsedControl"],
 button[data-testid="stBaseButton-headerNoPadding"],
@@ -296,35 +305,91 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] button[aria-label="Collapse sidebar"] {
     display: none !important;
 }
+
+/* All text content — BLACK, unambiguously readable on white */
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3,
+[data-testid="stSidebar"] h4,
+[data-testid="stSidebar"] h5,
 [data-testid="stSidebar"] label,
 [data-testid="stSidebar"] p,
 [data-testid="stSidebar"] span,
+[data-testid="stSidebar"] div,
 [data-testid="stSidebar"] .stMarkdown,
-[data-testid="stSidebar"] [data-testid="stMarkdownContainer"] {
+[data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary *,
+[data-testid="stSidebar"] [data-testid="stExpander"] p,
+[data-testid="stSidebar"] [data-testid="stExpander"] label,
+[data-testid="stSidebar"] details summary,
+[data-testid="stSidebar"] details summary * {
     font-family: 'Nunito', sans-serif !important;
-    color: #e8e8e8 !important;
+    color: #1a1a1a !important;
 }
 [data-testid="stSidebar"] h1,
 [data-testid="stSidebar"] h2,
 [data-testid="stSidebar"] h3 {
     text-align: center !important;
+    font-weight: 800 !important;
 }
+[data-testid="stSidebar"] h2 {
+    border-bottom: 2px solid #E8461E !important;
+    padding-bottom: 4px !important;
+}
+/* Input fields — white bg, black text, dark border */
 [data-testid="stSidebar"] .stTextInput input,
-[data-testid="stSidebar"] .stNumberInput input {
-    background: #243030 !important;
-    border-color: #E8461E !important;
-    color: #e8e8e8 !important;
+[data-testid="stSidebar"] .stNumberInput input,
+[data-testid="stSidebar"] input[type="number"],
+[data-testid="stSidebar"] input[type="text"] {
+    background: #ffffff !important;
+    border: 1px solid #888 !important;
+    color: #1a1a1a !important;
     font-family: 'Nunito', sans-serif !important;
+    font-weight: 600 !important;
+}
+/* Number input +/- buttons */
+[data-testid="stSidebar"] .stNumberInput button,
+[data-testid="stSidebar"] [data-testid="stNumberInput"] button {
+    background: #f0f0f0 !important;
+    color: #1a1a1a !important;
+    border: 1px solid #888 !important;
 }
 [data-testid="stSidebar"] hr {
-    border-color: #2e3d3d !important;
+    border-color: #ccc !important;
 }
 [data-testid="stSidebar"] .stCaption,
-[data-testid="stSidebar"] small {
-    color: #aaa !important;
+[data-testid="stSidebar"] small,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: #555 !important;
+}
+/* Expander summary row (the clickable header of each threshold section) */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary,
+[data-testid="stSidebar"] details > summary {
+    background: #f5f5f5 !important;
+    color: #1a1a1a !important;
+    font-weight: 700 !important;
+    border: 1px solid #ddd !important;
+    border-radius: 4px !important;
+    padding: 8px 10px !important;
+}
+/* Expander body — the container that holds the inputs */
+[data-testid="stSidebar"] [data-testid="stExpanderDetails"],
+[data-testid="stSidebar"] details[open] > div {
+    background: #ffffff !important;
+    border: 1px solid #e0e0e0 !important;
+    border-top: none !important;
+    padding: 10px !important;
+}
+/* Checkbox label */
+[data-testid="stSidebar"] .stCheckbox label,
+[data-testid="stSidebar"] .stCheckbox label * {
+    color: #1a1a1a !important;
+}
+/* Radio buttons */
+[data-testid="stSidebar"] .stRadio label,
+[data-testid="stSidebar"] .stRadio label * {
+    color: #1a1a1a !important;
 }
 /* Fix file uploader — hide instruction text and Add button, keep Upload button only */
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
