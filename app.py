@@ -322,11 +322,13 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] .stMarkdown,
 [data-testid="stSidebar"] [data-testid="stMarkdownContainer"],
 [data-testid="stSidebar"] [data-testid="stExpander"] summary,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary *,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary p,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary label,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid="stMarkdownContainer"],
 [data-testid="stSidebar"] [data-testid="stExpander"] p,
 [data-testid="stSidebar"] [data-testid="stExpander"] label,
 [data-testid="stSidebar"] details summary,
-[data-testid="stSidebar"] details summary * {
+[data-testid="stSidebar"] details summary p {
     font-family: 'Nunito', sans-serif !important;
     color: #ffffff !important;
 }
@@ -539,14 +541,41 @@ button[data-testid="stBaseButton-headerNoPadding"],
     border-color: #E8461E !important;
 }
 
-/* ── Kill the "arrow_drop_down" material-icon text that leaks when
-   the material-icons font is not loaded (shows up as "arr..." next
-   to expander headers) ────────────────────────────────────────── */
-[data-testid="stSidebar"] [data-testid="stExpander"] summary .material-icons,
-[data-testid="stSidebar"] [data-testid="stExpander"] summary [class*="material"],
-[data-testid="stSidebar"] [data-testid="stExpander"] summary svg + *:not(p):not(span):not(div),
-[data-testid="stSidebar"] [data-testid="stExpander"] summary i {
+/* ── Kill the "arrow_drop_down" material-icon text that leaks because
+   the global summary * { font-family: Nunito !important } overrides
+   the material-icons / material-symbols font, so the ligature resolves
+   as literal text.  Hide ANY icon-font element inside expander
+   summaries — the fold/unfold visual is obvious from the content
+   change alone.  Also restore the icon font for any non-hidden
+   icon spans in case Streamlit adds more. ──────────────────── */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span[class*="material"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary i[class*="material"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span.material-icons,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span.material-symbols-rounded,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary span.material-symbols-outlined,
+[data-testid="stSidebar"] details > summary span[class*="material"],
+[data-testid="stSidebar"] details > summary i[class*="material"] {
     display: none !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    font-size: 0 !important;
+}
+/* Belt-and-suspenders: any element inside expander summaries with
+   data-testid containing 'Icon' (Streamlit's newer pattern) */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid*="Icon" i],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [data-testid*="icon" i] {
+    display: none !important;
+}
+/* Nuclear: hide any direct child of the summary that isn't a text
+   container (Markdown / p / label / svg we explicitly want).  This
+   catches any lingering icon element regardless of class/testid. */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > span:not([data-testid="stMarkdownContainer"]):not(:has(p)):not(:has(label)),
+[data-testid="stSidebar"] [data-testid="stExpander"] summary > i,
+[data-testid="stSidebar"] details > summary > span:not([data-testid="stMarkdownContainer"]):not(:has(p)):not(:has(label)) {
+    display: none !important;
+    font-size: 0 !important;
+    width: 0 !important;
+    color: transparent !important;
 }
 
 /* ── Equal-height columns ────────────────────────────────────── */
