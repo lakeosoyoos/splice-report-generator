@@ -1940,13 +1940,17 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     bend_fill_review = bend_fill
     bend_fill_high   = bend_fill
     bend_font_high   = bend_font
-    # LAUNCH ISSUE: fuchsia / magenta — warns the tech a fiber had launch-end
-    # trouble (broken at launch, damaged connector, truncated event table)
-    launch_fill_high   = PatternFill(start_color="C0185F", end_color="C0185F", fill_type="solid")  # HIGH
-    launch_fill_review = PatternFill(start_color="E91E63", end_color="E91E63", fill_type="solid")  # REVIEW
-    launch_fill_watch  = PatternFill(start_color="F8BBD0", end_color="F8BBD0", fill_type="solid")  # WATCH
-    launch_font_high   = Font(bold=True, size=8, color="FFFFFF")
-    launch_font_watch  = Font(bold=True, size=8, color="880E4F")
+    # LAUNCH ISSUE: single orange fill — warns the tech a fiber had
+    # launch-end trouble (broken at launch, damaged connector, truncated
+    # event table, bad reflectance).  Orange was chosen to be clearly
+    # distinct from the pink A+B reburn fill.  Severity tiers were
+    # collapsed per tech feedback — a launch issue is a launch issue.
+    launch_fill        = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
+    launch_font        = Font(bold=True, size=8, color="5D2E00")
+    # Back-compat aliases (in case anything else in the codebase still
+    # references the per-severity names)
+    launch_fill_high = launch_fill_review = launch_fill_watch = launch_fill
+    launch_font_high = launch_font_watch = launch_font
 
     border = Border(
         left=Side(style='thin', color='CCCCCC'),
@@ -2008,9 +2012,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
 
     # ── Data rows ──
     def _launch_fill(sev):
-        if sev == 'HIGH':   return launch_fill_high,   launch_font_high
-        if sev == 'REVIEW': return launch_fill_review, launch_font_high
-        return launch_fill_watch, launch_font_watch
+        # Single light-pink tier for all launch issues (severity ignored)
+        return launch_fill, launch_font
 
     for ri in range(n_ribbons):
         row = ri + 4
@@ -2096,9 +2099,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Lavender",   "E8D5F5", "4B0082", "B-only, est bidir OK — B saw it, no A entry. Estimated bidir (B/2) is below threshold. label: 'F# .xxx(B) ~.xxxbd'"),
         ("Purple",     "C084FC", "1A0033", "B-only, est bidir HIGH — B saw it, no A entry. Estimated bidir (B/2) still exceeds threshold. label: 'F# .xxx(B) ⚠.xxxbd'"),
         ("Yellow",     "FFEB3B", "5D4037", "BEND — event ≥ 0.090 dB at a position more than 150 m from the closure center.  Inspect conduit for pinch or tight bend."),
-        ("Pink-Lt",    "F8BBD0", "880E4F", "LAUNCH (WATCH) — launch-end anomaly: reflectance outlier or missed first splice.  Appears in ILA column."),
-        ("Pink-Md",    "E91E63", "FFFFFF", "LAUNCH (REVIEW) — bad launch reflectance (weaker than expected).  Check launch connector."),
-        ("Pink-Dk",    "C0185F", "FFFFFF", "LAUNCH (HIGH) — fiber broken at launch / high launch loss / file missing.  Fiber would otherwise be SILENT in the report."),
+        ("Orange",     "FFA500", "5D2E00", "LAUNCH — fiber has a launch-end issue (broken at launch, high launch loss, bad reflectance, empty event table, or missing file).  Single tier — no WATCH/REVIEW/HIGH split.  Appears in ILA column.  Distinct from pink A+B reburn."),
     ]
     ws_leg.cell(row=1, column=1, value="Color").font = Font(bold=True, size=10)
     ws_leg.cell(row=1, column=2, value="Meaning").font = Font(bold=True, size=10)
@@ -2377,7 +2378,7 @@ def main():
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
     print(f"  B-only:       {n_b_only}  (purple) — B saw it, A did not  ← EXFO extra")
     print(f"  Bends:        {n_bend}  (yellow) — event >= {BEND_THRESHOLD:.3f} dB, > 150 m from closure center")
-    print(f"  Launch:       {len(launch_issues)}  (fuchsia) — launch-end issues (HIGH={high_n}, REVIEW={review_n}, WATCH={watch_n})")
+    print(f"  Launch:       {len(launch_issues)}  (orange) — launch-end issues (single tier)")
     print(f"  ──────────────────────────────────")
     print(f"  Total:        {n_total}")
     print(f"  Output:       {args.output}")
