@@ -391,6 +391,26 @@ button[data-testid="stBaseButton-headerNoPadding"],
 [data-testid="stSidebar"] .stRadio label * {
     color: #ffffff !important;
 }
+/* File-uploader dropzone — give it a visible border on black bg */
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"],
+[data-testid="stSidebar"] [data-testid="stFileUploader"] section {
+    background: #1a1a1a !important;
+    border: 2px dashed #E8461E !important;
+    border-radius: 6px !important;
+    color: #ffffff !important;
+    min-height: 80px !important;
+    padding: 12px !important;
+}
+[data-testid="stSidebar"] [data-testid="stFileUploaderDropzone"] *,
+[data-testid="stSidebar"] [data-testid="stFileUploader"] section * {
+    color: #ffffff !important;
+}
+/* Uploaded-file chip (once a file is loaded) */
+[data-testid="stSidebar"] [data-testid="stFileUploaderFile"],
+[data-testid="stSidebar"] [data-testid="stFileUploaderFile"] * {
+    color: #ffffff !important;
+    background: #222 !important;
+}
 /* Fix file uploader — hide instruction text and Add button, keep Upload button only */
 [data-testid="stSidebar"] [data-testid="stFileUploaderDropzoneInstructions"] > div {
     display: none !important;
