@@ -801,12 +801,20 @@ def refine_closure_centers(fibers_a, splices, validate=True,
         # catches bend/damage zones (which always fail both) without risking
         # a real closure where the fibers happen to produce uniform positive
         # losses.
+        # Validation now relies solely on the loss-distribution physics gate
+        # (zero gainers AND elevated median = bend/damage signature).  The
+        # older tight_std_m and tight_frac geometry gates were removed per
+        # tech direction — they were dropping legitimate closures on long
+        # cables where event scatter or low-participation clusters are
+        # normal.  tight_std_m / tight_frac are still computed for diagnostic
+        # display only.
         fails = []
-        if tight_std_m > std_max:
-            fails.append(f'std_too_wide({tight_std_m:.0f}m)')
-        if sp['tight_frac'] < tight_fr:
-            fails.append(f'too_few_fibers({sp["tight_frac"]:.2f})')
-        if len(tight_losses) >= 50:
+        # Apply the loss-distribution test whenever the cluster is at least
+        # as big as the MIN_POP_SPLICE candidate threshold (20 fibers).  The
+        # older 50-fiber guard was too strict now that this is the only gate
+        # — damage zones on long cables often have < 50 fibers in the tight
+        # cluster because most of the population is already broken upstream.
+        if len(tight_losses) >= MIN_POP_SPLICE:
             no_gainers_fail = sp['gainer_frac'] < min_gnr
             high_median_fail = sp['median_loss_db'] > med_max
             if no_gainers_fail and high_median_fail:
