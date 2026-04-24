@@ -29,6 +29,7 @@ from splicereportmatchexfo import (
     BEND_THRESHOLD, CLOSURE_MATCH_KM,
     LAUNCH_HIGH_LOSS_DB, LAUNCH_BAD_REFL_DB,
     LAUNCH_FIBER_MAX,
+    CLOSURE_VALID_MIN_GAINER_FRAC, CLOSURE_VALID_MEDIAN_LOSS_MAX,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -45,6 +46,8 @@ st.set_page_config(
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/icon?family=Material+Icons');
+@import url('https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap');
 
 /* ── Reset & base ────────────────────────────────────────────── */
 #MainMenu       { visibility: hidden; }
@@ -491,55 +494,59 @@ button[data-testid="stBaseButton-headerNoPadding"],
 }
 
 /* ── Radio ───────────────────────────────────────────────────── */
-.stRadio [role="radiogroup"] label {
-    font-family: 'Nunito', sans-serif !important;
-    font-weight: 700 !important;
-    background-color: transparent !important;
-    border-color: transparent !important;
-}
-.stRadio [role="radiogroup"] label[data-checked="true"],
-.stRadio [role="radiogroup"] label:has(input:checked) {
-    background-color: transparent !important;
-    border-color: transparent !important;
-    color: inherit !important;
-}
-.stRadio [role="radiogroup"] label[data-checked="true"] p,
-.stRadio [role="radiogroup"] label:has(input:checked) p {
-    color: inherit !important;
-}
-/* Override Streamlit/BaseWeb primary color for radio dot */
 :root {
     --primary-color: #E8461E !important;
 }
-/* Radio circles in sidebar — must be visible on black bg.
-   The [data-testid="stSidebar"] *  rule above paints everything
-   black, which hides the circle.  Force the outer ring to have a
-   white-ish background with an orange border; center dot orange
-   when checked. */
-[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"],
-[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"] > div {
-    background-color: #ffffff !important;
+/* In the sidebar, render the radio as a chip-style toggle: hide the
+   BaseWeb circle entirely (it can't survive the black background
+   invariably) and give the whole label a visible border, with an
+   orange fill on the checked option. */
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] {
+    gap: 8px !important;
+}
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label {
+    font-family: 'Nunito', sans-serif !important;
+    font-weight: 700 !important;
+    background-color: #1a1a1a !important;
     border: 2px solid #E8461E !important;
-    width: 18px !important;
-    height: 18px !important;
-    border-radius: 50% !important;
-    box-sizing: border-box !important;
+    border-radius: 6px !important;
+    padding: 6px 14px !important;
+    color: #ffffff !important;
+    cursor: pointer !important;
 }
-[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"][aria-checked="true"] {
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label:hover {
+    background-color: #2a2a2a !important;
+}
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label[data-checked="true"],
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label:has(input:checked) {
     background-color: #E8461E !important;
-    border-color: #E8461E !important;
+    color: #ffffff !important;
 }
-[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"][aria-checked="true"] > div {
-    background-color: #E8461E !important;
-    border-color: #ffffff !important;
+[data-testid="stSidebar"] .stRadio [role="radiogroup"] label * {
+    color: #ffffff !important;
 }
-/* Non-sidebar radios keep the older lighter styling */
+/* Hide the BaseWeb radio circle entirely in the sidebar — the chip
+   style makes it redundant */
+[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"] {
+    display: none !important;
+}
+/* Non-sidebar radios keep their default BaseWeb circle styling */
 [data-baseweb="radio"] [role="radio"][aria-checked="true"] div {
     background-color: #E8461E !important;
     border-color: #E8461E !important;
 }
 [data-baseweb="radio"] [role="radio"] div {
     border-color: #E8461E !important;
+}
+
+/* ── Kill the "arrow_drop_down" material-icon text that leaks when
+   the material-icons font is not loaded (shows up as "arr..." next
+   to expander headers) ────────────────────────────────────────── */
+[data-testid="stSidebar"] [data-testid="stExpander"] summary .material-icons,
+[data-testid="stSidebar"] [data-testid="stExpander"] summary [class*="material"],
+[data-testid="stSidebar"] [data-testid="stExpander"] summary svg + *:not(p):not(span):not(div),
+[data-testid="stSidebar"] [data-testid="stExpander"] summary i {
+    display: none !important;
 }
 
 /* ── Equal-height columns ────────────────────────────────────── */
@@ -716,6 +723,33 @@ with st.sidebar:
                   "tagged BEND.  Smaller = stricter (more bends flagged)."),
         )
 
+    # ── Closure validation (single loss-distribution gate) ────────────
+    with st.expander("Closure validation (phantom filter)", expanded=True):
+        st.markdown(
+            "<div style='color:#ccc;font-size:11.5px;line-height:1.4;'>"
+            "Single physics gate: a candidate closure is dropped as a phantom "
+            "(bend / damage zone) when <b>both</b> — zero gainers <b>AND</b> "
+            "elevated median loss — fail together.  The older tight-std and "
+            "tight-fraction geometry gates were removed per tech direction."
+            "</div>",
+            unsafe_allow_html=True,
+        )
+        closure_min_gainer_frac = st.number_input(
+            "Min gainer fraction",
+            value=CLOSURE_VALID_MIN_GAINER_FRAC,
+            format="%.2f", step=0.01, min_value=0.00, max_value=1.00,
+            help=("Fraction of fibers in the tight cluster that must show a gainer "
+                  "(negative loss) for the closure to be considered real.  Below "
+                  "this AND median-loss above its cap → drop as phantom."),
+        )
+        closure_median_loss_max = st.number_input(
+            "Max median loss (dB)",
+            value=CLOSURE_VALID_MEDIAN_LOSS_MAX,
+            format="%.3f", step=0.01, min_value=0.001,
+            help=("Median loss inside the tight cluster.  Above this AND "
+                  "gainer-fraction below its floor → drop as phantom."),
+        )
+
     # ── Launch / connector thresholds ─────────────────────────────────
     with st.expander("Launch / connector thresholds", expanded=True):
         launch_high_loss = st.number_input(
@@ -875,7 +909,9 @@ if run_button and has_a:
     with redirect_stdout(log_buf):
         splice_candidates = discover_splices(fibers_a)
         real_splices, phantom_zones = refine_closure_centers(
-            fibers_a, splice_candidates, return_phantoms=True)
+            fibers_a, splice_candidates, return_phantoms=True,
+            valid_min_gainer_frac=closure_min_gainer_frac,
+            valid_median_loss_max=closure_median_loss_max)
         # Interleave phantom bend/damage zones between the real splices in
         # position order — mirrors the tech's Cle Elum layout.
         splices = sorted(
@@ -1117,13 +1153,15 @@ else:
             <div class="tc-card-title">Excel Report Color Key</div>
             <div class="tc-legend">
                 <span class="tc-pill"><span class="tc-swatch" style="background:#FFC7CE"></span>Pink - A+B Reburn</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red - Break</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FF8800"></span>Orange - Broke</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue - B-fill</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Yellow - A-only</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#FFD700"></span>Gold - A-only &#9888;</span>
-                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender - B-only</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF4444"></span>Red - Break / Broke</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#BDD7EE"></span>Blue - B-fill past break</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#BFBFBF"></span>Gray - Dead zone</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFEB3B"></span>Yellow - Bend (&ge; 0.090 dB)</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFF2CC"></span>Lt. Yellow - A-only OK</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FF7043"></span>Coral - A-only &#9888;</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#E8D5F5"></span>Lavender - B-only OK</span>
                 <span class="tc-pill"><span class="tc-swatch" style="background:#C084FC"></span>Purple - B-only &#9888;</span>
+                <span class="tc-pill"><span class="tc-swatch" style="background:#FFA500"></span>Orange - Launch issue</span>
             </div>
         </div>
     </div>
