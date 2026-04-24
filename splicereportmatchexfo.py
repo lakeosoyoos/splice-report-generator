@@ -992,7 +992,8 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
 #           (identical logic to splice_report_generator.py, plus A-only flagging)
 # ═══════════════════════════════════════════════════════════════════════
 
-def analyze_all(fibers_a, fibers_b, splices, threshold):
+def analyze_all(fibers_a, fibers_b, splices, threshold,
+                bend_threshold=None, closure_match_km=None, **_ignored):
     """
     Pass 1: For each fiber at each known splice closure position:
       - Find A event → find matching B event → compute bidir loss → flag if above threshold
@@ -1004,7 +1005,14 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
       'a_only' — only A direction, no B match
       'broke'  — fiber terminates mid-span
       'bfill'  — B-direction fill past a break
+
+    Optional kwargs (wired from the Streamlit sidebar):
+      bend_threshold    — overrides BEND_THRESHOLD for this call
+      closure_match_km  — overrides CLOSURE_MATCH_KM for this call
+    Additional unknown kwargs are accepted and ignored for forward-compat.
     """
+    bend_threshold = BEND_THRESHOLD if bend_threshold is None else float(bend_threshold)
+    closure_match_km = CLOSURE_MATCH_KM if closure_match_km is None else float(closure_match_km)
     results = {}
 
     # End-of-fiber distances for broke detection
@@ -1316,7 +1324,8 @@ def analyze_all(fibers_a, fibers_b, splices, threshold):
 #  STEP 4 — Pass 2: Scan all B-direction events not caught in Pass 1
 # ═══════════════════════════════════════════════════════════════════════
 
-def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, total_span_a):
+def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, total_span_a,
+                  bend_threshold=None, closure_match_km=None, **_ignored):
     """
     Pass 2: For every B-direction event above threshold that was NOT already
     caught in Pass 1, find the nearest splice position (within 1.5 km) and report it.
