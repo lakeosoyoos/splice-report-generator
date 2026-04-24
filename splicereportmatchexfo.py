@@ -178,9 +178,14 @@ CLOSURE_VALID_MEDIAN_LOSS_MAX = 0.100   # dB — median loss inside the tight
 # These fibers need to be flagged on their own so the tech knows to go look.
 #
 LAUNCH_HIGH_LOSS_DB          = 3.0    # launch connector loss >= this dB → issue
-LAUNCH_BAD_REFL_DB           = -70.0  # launch reflectance WORSE than this → issue
-                                      #   (flags refl in the 0 to -70 dB range;
-                                      #    less-negative = weaker reflection)
+LAUNCH_BAD_REFL_DB           = -15.0  # launch reflectance stronger (closer to 0)
+                                      #   than this → flag damaged/dirty connector.
+                                      #   Refl is reported negative; healthy buried
+                                      #   launch is -50 to -55 dB, damaged is
+                                      #   -10 to -30, missing is < -70.  Rule
+                                      #   (refl > -15) flags only the 0 to -15
+                                      #   range — anomalously strong reflections
+                                      #   that indicate connector damage.
 LAUNCH_REFL_OUTLIER_DB       = 10.0   # |fiber_refl − population_median| > this → issue
 LAUNCH_NO_FIRST_SPLICE_TOL_KM = 2.0   # km — must see an event within this of the
                                       #      first population closure
