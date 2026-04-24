@@ -23,13 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from splicereportmatchexfo import (
     load_all, discover_splices, refine_closure_centers, detect_launch_issues,
-    analyze_all, scan_b_events,
+    analyze_all, scan_a_standalone_events, scan_b_past_breaks,
     build_ribbon_data, write_xlsx,
-    REBURN_THRESHOLD, NOMINAL_SPLICE, RIBBON_SIZE,
-    BEND_THRESHOLD, CLOSURE_MATCH_KM,
-    LAUNCH_HIGH_LOSS_DB, LAUNCH_BAD_REFL_DB,
-    LAUNCH_FIBER_MAX,
-    CLOSURE_VALID_MIN_GAINER_FRAC, CLOSURE_VALID_MEDIAN_LOSS_MAX,
+    REBURN_THRESHOLD, RIBBON_SIZE,
 )
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -725,114 +721,30 @@ with st.sidebar:
         st.session_state.upload_key = old_key + 1
         st.rerun()
 
-    st.divider()
-    st.markdown("## Settings")
-
-    # ── Splice reburn ─────────────────────────────────────────────────
-    threshold   = st.number_input(
-        "Bidirectional reburn threshold (dB)",
-        value=REBURN_THRESHOLD,
-        format="%.3f", step=0.01,
-        help="Pink A+B reburn if bidirectional loss ≥ this value at a closure."
-    )
+    # ── Settings stripped ─────────────────────────────────────────────
+    # All threshold sliders were removed per tech direction.  The script
+    # now runs with the single set of gates documented in the latest
+    # SCRIPT_LOGIC_FLOWCHART.pdf:
+    #   • Reburn threshold 0.150 dB
+    #   • Bend: event ≥ 0.090 dB and > 150 m from closure (single yellow tier)
+    #   • Closure validation: loss-distribution only (gainer_frac < 0.05
+    #     AND median_loss > 0.100 dB → drop as phantom)
+    #   • Launch: loss ≥ 3.0 dB OR refl in 0 to -70 dB (single orange tier)
+    #   • B usage: bidir averaging at real splices, plus past-break B-fill
+    #   • Dead-zone annotation for broken fibers where B also ends short
+    threshold   = REBURN_THRESHOLD
     ribbon_size = RIBBON_SIZE
 
-    # ── Bend thresholds ───────────────────────────────────────────────
-    with st.expander("Bend thresholds", expanded=True):
-        bend_threshold = st.number_input(
-            "Bend minimum loss (dB)",
-            value=BEND_THRESHOLD,
-            format="%.3f", step=0.005,
-            help="Any event ≥ this magnitude offset from a closure is tagged BEND.",
-        )
-        closure_match_m = st.number_input(
-            "Bend offset from closure (m)",
-            value=int(CLOSURE_MATCH_KM * 1000), step=25, min_value=10,
-            help=("Events more than this far from the true closure center are "
-                  "tagged BEND.  Smaller = stricter (more bends flagged)."),
-        )
-
-    # ── Closure validation (single loss-distribution gate) ────────────
-    with st.expander("Closure validation (phantom filter)", expanded=True):
-        st.markdown(
-            "<div style='color:#ccc;font-size:11.5px;line-height:1.4;'>"
-            "Single physics gate: a candidate closure is dropped as a phantom "
-            "(bend / damage zone) when <b>both</b> — zero gainers <b>AND</b> "
-            "elevated median loss — fail together.  The older tight-std and "
-            "tight-fraction geometry gates were removed per tech direction."
-            "</div>",
-            unsafe_allow_html=True,
-        )
-        closure_min_gainer_frac = st.number_input(
-            "Min gainer fraction",
-            value=CLOSURE_VALID_MIN_GAINER_FRAC,
-            format="%.2f", step=0.01, min_value=0.00, max_value=1.00,
-            help=("Fraction of fibers in the tight cluster that must show a gainer "
-                  "(negative loss) for the closure to be considered real.  Below "
-                  "this AND median-loss above its cap → drop as phantom."),
-        )
-        closure_median_loss_max = st.number_input(
-            "Max median loss (dB)",
-            value=CLOSURE_VALID_MEDIAN_LOSS_MAX,
-            format="%.3f", step=0.01, min_value=0.001,
-            help=("Median loss inside the tight cluster.  Above this AND "
-                  "gainer-fraction below its floor → drop as phantom."),
-        )
-
-    # ── Launch / connector thresholds ─────────────────────────────────
-    with st.expander("Launch / connector thresholds", expanded=True):
-        launch_high_loss = st.number_input(
-            "High launch loss threshold (dB)",
-            value=LAUNCH_HIGH_LOSS_DB,
-            format="%.2f", step=0.1,
-            help="Launch-connector loss at or above this value flags the fiber.",
-        )
-        launch_bad_refl = st.number_input(
-            "Bad launch reflectance (dB)",
-            value=LAUNCH_BAD_REFL_DB,
-            format="%.1f", step=0.5,
-            help=("Launch reflectance WORSE than (greater than) this value flags "
-                  "the fiber.  Default -70 dB flags any reflection in the "
-                  "0 to -70 dB range."),
-        )
-        launch_fiber_max = st.number_input(
-            "Launch fiber max distance (km)",
-            value=LAUNCH_FIBER_MAX,
-            format="%.1f", step=0.5, min_value=0.1,
-            help="Scan depth from 0 km for launch connector / gainer-loser detection.",
-        )
-
-    # ── Gainer / Loser thresholds (for locating launch connector) ─────
-    with st.expander("Gainer / Loser event thresholds", expanded=True):
-        use_gl = st.checkbox("Enable gainer / loser detection", value=False,
-                             help="Tag unusually negative (gainer) or positive (loser) events in the launch zone.")
-        gainer_threshold = st.number_input(
-            "Gainer threshold (dB, negative)",
-            value=-0.500, format="%.3f", step=0.05,
-            help=("Events with loss ≤ this value count as gainers (apparent gain). "
-                  "Typical MFD-mismatch / hot APC connector gainers are −0.3 to −0.8 dB."),
-        )
-        loser_threshold = st.number_input(
-            "Loser threshold (dB)",
-            value=0.500, format="%.3f", step=0.05,
-            help=("Events with loss ≥ this value count as abnormal losers.  "
-                  "Useful for finding dirty / damaged launch connectors."),
-        )
-        if not use_gl:
-            # Disabled: pass None so detect_launch_issues skips the gainer/loser check
-            gainer_threshold = None
-            loser_threshold = None
-
-    st.markdown("**Include in Report**")
-    col_chk1, col_chk2 = st.columns(2)
-    with col_chk1:
-        inc_reburn = st.checkbox("A+B Reburn", value=True, key="inc_reburn")
-        inc_break  = st.checkbox("Break",      value=True, key="inc_break")
-        inc_broke  = st.checkbox("Broke",      value=True, key="inc_broke")
-    with col_chk2:
-        inc_bfill  = st.checkbox("B-fill",     value=True, key="inc_bfill")
-        inc_a_only = st.checkbox("A-only",     value=True, key="inc_a_only")
-        inc_b_only = st.checkbox("B-only",     value=True, key="inc_b_only")
+    st.divider()
+    st.markdown(
+        "<div style='color:#ccc;font-size:11.5px;line-height:1.45;padding:4px 0;'>"
+        "Running with the current default gates (see "
+        "<b>SCRIPT_LOGIC_FLOWCHART.pdf</b>).  Thresholds are not adjustable "
+        "in the UI — the script is tuned against the tech's reference "
+        "reports."
+        "</div>",
+        unsafe_allow_html=True,
+    )
 
     has_a = (bool(uploaded_a) or bool(zip_a))
     run_button = st.button("Generate Report", type="primary",
@@ -938,9 +850,7 @@ if run_button and has_a:
     with redirect_stdout(log_buf):
         splice_candidates = discover_splices(fibers_a)
         real_splices, phantom_zones = refine_closure_centers(
-            fibers_a, splice_candidates, return_phantoms=True,
-            valid_min_gainer_frac=closure_min_gainer_frac,
-            valid_median_loss_max=closure_median_loss_max)
+            fibers_a, splice_candidates, return_phantoms=True)
         # Interleave phantom bend/damage zones between the real splices in
         # position order — mirrors the tech's Cle Elum layout.
         splices = sorted(
@@ -954,19 +864,11 @@ if run_button and has_a:
                 sp['splice_display_num'] = splice_display_num
     bar.progress(0.25, text=f"Found {len(splices)} splice closures...")
 
-    # Launch-issue detection (before any event normalisation that might strip
-    # details from the launch area)
+    # Launch-issue detection (module defaults — mirrors the CLI)
     bar.progress(0.30, text="Detecting launch-end issues...")
     first_splice_km = splices[0]['position_km'] if splices else None
     with redirect_stdout(log_buf):
-        launch_issues = detect_launch_issues(
-            fibers_a, fibers_b, first_splice_km,
-            high_loss_db=launch_high_loss,
-            bad_refl_db=launch_bad_refl,
-            gainer_threshold=gainer_threshold,
-            loser_threshold=loser_threshold,
-            launch_fiber_max_km=launch_fiber_max,
-        )
+        launch_issues = detect_launch_issues(fibers_a, fibers_b, first_splice_km)
 
     actual_span = 0
     if actual_span == 0:
@@ -976,42 +878,27 @@ if run_button and has_a:
             top_q = all_ends[int(len(all_ends) * 0.75):]
             actual_span = round(np.median(top_q), 2)
 
+    # Pass 1 — analyze_all (at-splice classification + broke + B-fill)
     bar.progress(0.45, text=f"Pass 1: {n_fibers} fibers × {len(splices)} splice positions...")
-    closure_match_km = closure_match_m / 1000.0
     with redirect_stdout(log_buf):
-        results = analyze_all(
-            fibers_a, fibers_b, splices, threshold,
-            bend_threshold=bend_threshold,
-            closure_match_km=closure_match_km,
+        results = analyze_all(fibers_a, fibers_b, splices, threshold)
+
+    # Pass 2a — standalone A-direction bends / breaks not at a closure
+    bar.progress(0.65, text="Pass 2a: scanning A-direction standalone events...")
+    with redirect_stdout(log_buf):
+        a_standalone = scan_a_standalone_events(
+            fibers_a, splices, results, actual_span,
         )
 
-    bar.progress(0.65, text="Pass 2: scanning B-direction for missed events...")
+    # Pass 2b — past-break B-fill (B-direction only used past A-side breaks)
+    bar.progress(0.72, text="Pass 2b: scanning B past A-side breaks (B-fill)...")
     with redirect_stdout(log_buf):
-        b_results = scan_b_events(
+        b_pastbreak = scan_b_past_breaks(
             fibers_a, fibers_b, splices, threshold, results, actual_span,
-            bend_threshold=bend_threshold,
-            closure_match_km=closure_match_km,
         )
 
-    all_results = {**results, **b_results}
-
-    # ── Apply event-type filters from sidebar ──────────────────────────────
-    def _included(r):
-        # Bends are always included — they're a distinct category from the sidebar options
-        if r.get('is_bend'): return True
-        if r.get('is_break')  and not st.session_state.get('inc_break',  True): return False
-        if r.get('is_broke')  and not st.session_state.get('inc_broke',  True): return False
-        if r.get('is_bfill')  and not st.session_state.get('inc_bfill',  True): return False
-        if r.get('is_a_only') and not st.session_state.get('inc_a_only', True): return False
-        if r.get('is_b_only') and not st.session_state.get('inc_b_only', True): return False
-        is_reburn = (r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
-                     and not r.get('is_break') and not r.get('is_broke')
-                     and not r.get('is_bend')
-                     and not r.get('is_bfill') and not r.get('is_a_only')
-                     and not r.get('is_b_only'))
-        if is_reburn and not st.session_state.get('inc_reburn', True): return False
-        return True
-    all_results = {k: v for k, v in all_results.items() if _included(v)}
+    # Merge in the CLI's priority order: Pass 1 > Pass 2a > Pass 2b
+    all_results = {**results, **a_standalone, **b_pastbreak}
 
     n_reburn      = sum(1 for r in all_results.values()
                         if r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
