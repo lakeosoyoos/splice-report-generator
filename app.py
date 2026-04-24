@@ -511,6 +511,29 @@ button[data-testid="stBaseButton-headerNoPadding"],
 :root {
     --primary-color: #E8461E !important;
 }
+/* Radio circles in sidebar — must be visible on black bg.
+   The [data-testid="stSidebar"] *  rule above paints everything
+   black, which hides the circle.  Force the outer ring to have a
+   white-ish background with an orange border; center dot orange
+   when checked. */
+[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"],
+[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"] > div {
+    background-color: #ffffff !important;
+    border: 2px solid #E8461E !important;
+    width: 18px !important;
+    height: 18px !important;
+    border-radius: 50% !important;
+    box-sizing: border-box !important;
+}
+[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"][aria-checked="true"] {
+    background-color: #E8461E !important;
+    border-color: #E8461E !important;
+}
+[data-testid="stSidebar"] [data-baseweb="radio"] [role="radio"][aria-checked="true"] > div {
+    background-color: #E8461E !important;
+    border-color: #ffffff !important;
+}
+/* Non-sidebar radios keep the older lighter styling */
 [data-baseweb="radio"] [role="radio"][aria-checked="true"] div {
     background-color: #E8461E !important;
     border-color: #E8461E !important;
