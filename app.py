@@ -24,6 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from splicereportmatchexfo import (
     load_all, discover_splices, refine_closure_centers, detect_launch_issues,
     analyze_all, scan_a_standalone_events, scan_b_past_breaks,
+    apply_field_gainer_rule,
     build_ribbon_data, write_xlsx,
     REBURN_THRESHOLD, RIBBON_SIZE,
 )
@@ -899,6 +900,10 @@ if run_button and has_a:
 
     # Merge in the CLI's priority order: Pass 1 > Pass 2a > Pass 2b
     all_results = {**results, **a_standalone, **b_pastbreak}
+
+    # Field-gainer post-pass — flag mid-span events with loss in [-0.7, 0]
+    with redirect_stdout(log_buf):
+        apply_field_gainer_rule(all_results, actual_span)
 
     n_reburn      = sum(1 for r in all_results.values()
                         if r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
