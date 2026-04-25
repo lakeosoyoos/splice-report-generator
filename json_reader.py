@@ -122,17 +122,18 @@ def parse_otdr_json(filepath: str) -> dict:
             wavelength_nm = _f(wl_list) or 1550.0
 
     # Build events list in the SOR-compatible format.
-    # JSON events include the launch level event (position ≈ -launch_m) and the
-    # end-of-fiber event.  The splice report script expects distances in km
-    # relative to the span start (span_start = 0), so we convert JSON positions
-    # (which are already in span-start coordinates — the launch event is at
-    # -launch_m) into km and drop the launch level event.
+    # JSON events include a 'Launch Level' reference event at position
+    # ≈ -launch_m AND a 'SpanStart' event at position 0 (the actual
+    # launch CONNECTOR, with real Loss and Reflectance values).  We
+    # skip the LaunchLevel reference because its Loss is always NaN,
+    # leaving the SpanStart event as events[0] in the normalized list —
+    # that's the launch connector that the launch-issue detector reads.
     events = []
     for i, ev in enumerate(m.get('Events', [])):
         pos_m = _f(ev.get('Position'))
         if pos_m is None:
             continue
-        if pos_m < -100:  # launch level (typically at -1007 for a 1 km launch)
+        if pos_m < -100:    # skip Launch Level reference marker
             continue
 
         dist_km = pos_m / 1000.0
