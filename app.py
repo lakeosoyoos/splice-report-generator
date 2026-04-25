@@ -802,22 +802,46 @@ def stage_files(uploaded, prefix="trace_"):
 
 
 def stage_zip(uploaded_zip, prefix="trace_zip_"):
-    """Extract SOR and/or JSON files from an uploaded ZIP into a temp dir."""
+    """Extract SOR and/or JSON files from an uploaded ZIP into a temp dir.
+
+    Returns (tmpdir, n_extracted).  Caller checks n_extracted > 0 and
+    surfaces a friendly error if it's zero.
+
+    Implementation notes:
+    - Always rewinds the upload buffer first; Streamlit's UploadedFile
+      may have its seek pointer at EOF if it was previously read.
+    - Reads the bytes once with .read() and wraps in BytesIO — more
+      robust than .getbuffer() (which returns a memoryview that some
+      Python / zipfile combinations have trouble with on cloud).
+    """
     import zipfile
     tmpdir = tempfile.mkdtemp(prefix=prefix)
-    with zipfile.ZipFile(io.BytesIO(uploaded_zip.getbuffer()), 'r') as zf:
-        for name in zf.namelist():
-            lower = name.lower()
-            if not (lower.endswith('.sor') or lower.endswith('.json')):
-                continue
-            if name.startswith('__MACOSX') or '/.DS_Store' in name:
-                continue
-            basename = os.path.basename(name)
-            if not basename:
-                continue
-            with zf.open(name) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
-                dst.write(src.read())
-    return tmpdir
+    try:
+        uploaded_zip.seek(0)
+    except Exception:
+        pass
+    raw = uploaded_zip.read()
+    n_extracted = 0
+    try:
+        with zipfile.ZipFile(io.BytesIO(raw), 'r') as zf:
+            for name in zf.namelist():
+                lower = name.lower()
+                if not (lower.endswith('.sor') or lower.endswith('.json')):
+                    continue
+                if name.startswith('__MACOSX') or '/.DS_Store' in name:
+                    continue
+                basename = os.path.basename(name)
+                if not basename:
+                    continue
+                with zf.open(name) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
+                    dst.write(src.read())
+                n_extracted += 1
+    except zipfile.BadZipFile as e:
+        raise RuntimeError(
+            f"Could not read '{getattr(uploaded_zip, 'name', '?')}' as a ZIP "
+            f"file ({e}).  Re-zip the folder of .sor/.json files and try again."
+        )
+    return tmpdir, n_extracted
 
 
 # ── Run ───────────────────────────────────────────────────────────────────────
@@ -825,9 +849,33 @@ def stage_zip(uploaded_zip, prefix="trace_zip_"):
 if run_button and has_a:
     if zip_a:
         prog = st.progress(0.0, text="Extracting A-direction ZIP...")
-        dir_a = stage_zip(zip_a, "splice_a_")
-        prog.progress(0.4, text="Extracting B-direction ZIP...")
-        dir_b = stage_zip(zip_b, "splice_b_") if zip_b else None
+        try:
+            dir_a, n_a = stage_zip(zip_a, "splice_a_")
+        except RuntimeError as e:
+            prog.empty()
+            st.error(str(e))
+            st.stop()
+        if n_a == 0:
+            prog.empty()
+            st.error(
+                f"'{zip_a.name}' contained no .sor or .json files at the top "
+                f"level.  Make sure the ZIP holds the OTDR files directly "
+                f"(or in a single folder), not nested inside multiple folders."
+            )
+            st.stop()
+        prog.progress(0.4, text=f"Extracting B-direction ZIP... ({n_a} A files extracted)")
+        dir_b = None
+        if zip_b:
+            try:
+                dir_b, n_b = stage_zip(zip_b, "splice_b_")
+            except RuntimeError as e:
+                prog.empty()
+                st.error(str(e))
+                st.stop()
+            if n_b == 0:
+                prog.empty()
+                st.error(f"'{zip_b.name}' contained no .sor or .json files.")
+                st.stop()
         prog.progress(0.5, text="Files extracted.")
         prog.empty()
     else:
