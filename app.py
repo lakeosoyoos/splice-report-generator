@@ -730,7 +730,8 @@ with st.sidebar:
     #   • Bend: event ≥ 0.090 dB and > 150 m from closure (single yellow tier)
     #   • Closure validation: loss-distribution only (gainer_frac < 0.05
     #     AND median_loss > 0.100 dB → drop as phantom)
-    #   • Launch: loss ≥ 3.0 dB OR refl in 0 to -70 dB (single orange tier)
+    #   • Launch: reflectance > -50 dB (single orange tier; loss rule off)
+    #   • Field gainer: mid-span loss in [-0.7, 0] dB (mint-green tier)
     #   • B usage: bidir averaging at real splices, plus past-break B-fill
     #   • Dead-zone annotation for broken fibers where B also ends short
     threshold   = REBURN_THRESHOLD
