@@ -177,21 +177,17 @@ CLOSURE_VALID_MEDIAN_LOSS_MAX = 0.100   # dB — median loss inside the tight
 # at known closures) nor Pass 2 (B-direction scan) has anything to match on.
 # These fibers need to be flagged on their own so the tech knows to go look.
 #
-LAUNCH_HIGH_LOSS_DB          = -0.5   # signed launch-event loss threshold.  Rule:
-                                      #   flag when launch_loss >= -0.5 dB (i.e.
-                                      #   value is at -0.5 or anywhere closer to
-                                      #   zero / positive).  Healthy MFD-mismatch
-                                      #   launches show a strong gainer (more
-                                      #   negative than -0.5 dB); anything weaker
-                                      #   than that gainer signature is anomalous.
-LAUNCH_BAD_REFL_DB           = -15.0  # launch reflectance stronger (closer to 0)
-                                      #   than this → flag damaged/dirty connector.
-                                      #   Refl is reported negative; healthy buried
-                                      #   launch is -50 to -55 dB, damaged is
-                                      #   -10 to -30, missing is < -70.  Rule
-                                      #   (refl > -15) flags only the 0 to -15
-                                      #   range — anomalously strong reflections
-                                      #   that indicate connector damage.
+LAUNCH_HIGH_LOSS_DB          = None   # launch-event LOSS rule disabled per tech
+                                      #   direction — the gate is on reflectance,
+                                      #   not loss.
+LAUNCH_BAD_REFL_DB           = -50.0  # launch reflectance threshold (signed,
+                                      #   strict greater-than).  Rule:
+                                      #     refl <= -50 dB → good (no flag)
+                                      #     refl >  -50 dB → bad  (flag)
+                                      #   Healthy buried launch is -50 to -55 dB
+                                      #   (passes); damaged / dirty connectors
+                                      #   read -10 to -30 dB (flag).  -50.01 is
+                                      #   good, -49.99 is bad, -54.8 is good.
 # ── FIELD-EVENT GAINER GATE ─────────────────────────────────────────────────
 # Mid-span events whose signed loss falls in the [-0.7, 0] dB range get
 # flagged as suspicious gainers — these are weak-gainer / near-zero events
@@ -1028,15 +1024,17 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                 tags.append('NO_EVENTS')
                 return
 
-            # Launch-event loss check — signed comparison (no abs()).
-            # Healthy MFD-mismatch launches show a strong gainer at or below
-            # -0.5 dB (more negative).  Strict greater-than: a launch_loss
-            # of EXACTLY -0.5 dB is good (no flag); -0.49 dB is bad; -0.51
-            # dB is good.
+            # Launch-connector reflectance check — signed comparison (strict
+            # greater-than).  A healthy buried launch reflects at -50 to -55
+            # dB; damaged / dirty / partially-cut connectors reflect closer
+            # to 0 (less negative).  Rule: refl > -50 → flag.
+            # The launch-loss rule was disabled (hi_loss is None) per tech
+            # direction.
             if launch_evt is not None:
-                launch_loss_signed = launch_evt.get('splice_loss') or 0.0
-                if launch_loss_signed > hi_loss:    # default hi_loss = -0.5
-                    tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
+                if hi_loss is not None:
+                    launch_loss_signed = launch_evt.get('splice_loss') or 0.0
+                    if launch_loss_signed > hi_loss:
+                        tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
                 if refl > bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
