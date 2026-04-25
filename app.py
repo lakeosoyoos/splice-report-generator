@@ -682,39 +682,27 @@ if "downloaded_once" not in st.session_state:
 with st.sidebar:
     st.markdown("## Upload SOR Files")
 
-    input_method = st.radio(
-        "Input method",
-        ["Upload ZIP", "Browse files"],
-        index=0,
-        horizontal=True,
+    # Single uploader per direction — accepts loose .sor / .json files OR
+    # a .zip archive of them.  The run block auto-detects based on the
+    # actual files that got dropped in.
+    uploaded_a = st.file_uploader(
+        "A-direction files (.sor, .json, or .zip)",
+        type=["sor", "json", "zip"],
+        accept_multiple_files=True,
+        key=f"upload_a_{st.session_state.upload_key}",
     )
-
-    uploaded_a = None
-    uploaded_b = None
-    zip_a      = None
-    zip_b      = None
-
-    if input_method == "Upload ZIP":
-        zip_a = st.file_uploader("A-direction ZIP", type=["zip"],
-                                 accept_multiple_files=False,
-                                 key=f"zip_a_{st.session_state.upload_key}")
-        if zip_a:
-            st.caption(f"A: {zip_a.name} ({zip_a.size/1024:.0f} KB)")
-        zip_b = st.file_uploader("B-direction ZIP (optional)", type=["zip"],
-                                 accept_multiple_files=False,
-                                 key=f"zip_b_{st.session_state.upload_key}")
-        if zip_b:
-            st.caption(f"B: {zip_b.name} ({zip_b.size/1024:.0f} KB)")
-
-    else:
-        uploaded_a = st.file_uploader("A-direction files (.sor or .json)",
-                                      type=["sor", "json"],
-                                      accept_multiple_files=True,
-                                      key=f"upload_a_{st.session_state.upload_key}")
-        uploaded_b = st.file_uploader("B-direction files (.sor or .json, optional)",
-                                      type=["sor", "json"],
-                                      accept_multiple_files=True,
-                                      key=f"upload_b_{st.session_state.upload_key}")
+    if uploaded_a:
+        total_kb = sum(f.size for f in uploaded_a) / 1024
+        st.caption(f"A: {len(uploaded_a)} file(s), {total_kb:.0f} KB total")
+    uploaded_b = st.file_uploader(
+        "B-direction files (.sor, .json, or .zip, optional)",
+        type=["sor", "json", "zip"],
+        accept_multiple_files=True,
+        key=f"upload_b_{st.session_state.upload_key}",
+    )
+    if uploaded_b:
+        total_kb = sum(f.size for f in uploaded_b) / 1024
+        st.caption(f"B: {len(uploaded_b)} file(s), {total_kb:.0f} KB total")
     if st.button("Clear All", use_container_width=True):
         old_key = st.session_state.upload_key
         for key in list(st.session_state.keys()):
@@ -748,7 +736,7 @@ with st.sidebar:
         unsafe_allow_html=True,
     )
 
-    has_a = (bool(uploaded_a) or bool(zip_a))
+    has_a = bool(uploaded_a)
     run_button = st.button("Generate Report", type="primary",
                            use_container_width=True, disabled=not has_a)
 
@@ -801,6 +789,57 @@ def stage_files(uploaded, prefix="trace_"):
     return tmpdir
 
 
+def stage_inputs(uploaded_list, prefix="trace_"):
+    """Stage a mixed list of uploads (.sor / .json / .zip).  Each file is
+    routed by extension — ZIPs are extracted in place, loose OTDR files
+    are copied directly into the same temp dir.  Returns (tmpdir, n, errors)
+    where n is the total OTDR-file count landed and errors is a list of
+    friendly strings for any unreadable archive."""
+    import zipfile
+    tmpdir = tempfile.mkdtemp(prefix=prefix)
+    n = 0
+    errors = []
+    for uf in uploaded_list:
+        name = uf.name
+        lower = name.lower()
+        if lower.endswith('.zip'):
+            try:
+                uf.seek(0)
+            except Exception:
+                pass
+            raw = uf.read()
+            try:
+                with zipfile.ZipFile(io.BytesIO(raw), 'r') as zf:
+                    for zname in zf.namelist():
+                        zlower = zname.lower()
+                        if not (zlower.endswith('.sor') or zlower.endswith('.json')):
+                            continue
+                        if zname.startswith('__MACOSX') or '/.DS_Store' in zname:
+                            continue
+                        basename = os.path.basename(zname)
+                        if not basename:
+                            continue
+                        with zf.open(zname) as src, open(os.path.join(tmpdir, basename), 'wb') as dst:
+                            dst.write(src.read())
+                        n += 1
+            except zipfile.BadZipFile as e:
+                errors.append(
+                    f"Could not read '{name}' as a ZIP ({e}).  "
+                    f"Re-zip the folder of .sor/.json files."
+                )
+        elif lower.endswith('.sor') or lower.endswith('.json'):
+            try:
+                uf.seek(0)
+            except Exception:
+                pass
+            with open(os.path.join(tmpdir, name), 'wb') as f:
+                f.write(uf.read())
+            n += 1
+        # Silently skip any other file extension — st.file_uploader
+        # already restricts to .sor/.json/.zip.
+    return tmpdir, n, errors
+
+
 def stage_zip(uploaded_zip, prefix="trace_zip_"):
     """Extract SOR and/or JSON files from an uploaded ZIP into a temp dir.
 
@@ -847,44 +886,30 @@ def stage_zip(uploaded_zip, prefix="trace_zip_"):
 # ── Run ───────────────────────────────────────────────────────────────────────
 
 if run_button and has_a:
-    if zip_a:
-        prog = st.progress(0.0, text="Extracting A-direction ZIP...")
-        try:
-            dir_a, n_a = stage_zip(zip_a, "splice_a_")
-        except RuntimeError as e:
-            prog.empty()
-            st.error(str(e))
-            st.stop()
-        if n_a == 0:
-            prog.empty()
-            st.error(
-                f"'{zip_a.name}' contained no .sor or .json files at the top "
-                f"level.  Make sure the ZIP holds the OTDR files directly "
-                f"(or in a single folder), not nested inside multiple folders."
-            )
-            st.stop()
-        prog.progress(0.4, text=f"Extracting B-direction ZIP... ({n_a} A files extracted)")
-        dir_b = None
-        if zip_b:
-            try:
-                dir_b, n_b = stage_zip(zip_b, "splice_b_")
-            except RuntimeError as e:
-                prog.empty()
-                st.error(str(e))
-                st.stop()
-            if n_b == 0:
-                prog.empty()
-                st.error(f"'{zip_b.name}' contained no .sor or .json files.")
-                st.stop()
-        prog.progress(0.5, text="Files extracted.")
+    prog = st.progress(0.0, text="Staging A-direction input...")
+    dir_a, n_a, errs_a = stage_inputs(uploaded_a, "splice_a_")
+    for e in errs_a:
+        st.warning(e)
+    if n_a == 0:
         prog.empty()
-    else:
-        prog = st.progress(0.0, text="Staging A-direction files...")
-        dir_a = stage_files(uploaded_a, "splice_a_")
-        prog.progress(0.4, text="Staging B-direction files...")
-        dir_b = stage_files(uploaded_b, "splice_b_") if uploaded_b else None
-        prog.progress(0.5, text="Files staged.")
-        prog.empty()
+        st.error(
+            "No .sor or .json files found in the A-direction input.  Drop "
+            "either loose OTDR files or a ZIP containing them."
+        )
+        st.stop()
+
+    prog.progress(0.4, text=f"A staged ({n_a} files).  Staging B-direction...")
+    dir_b = None
+    if uploaded_b:
+        dir_b, n_b, errs_b = stage_inputs(uploaded_b, "splice_b_")
+        for e in errs_b:
+            st.warning(e)
+        if n_b == 0:
+            prog.empty()
+            st.error("No .sor or .json files found in the B-direction input.")
+            st.stop()
+    prog.progress(0.5, text="Files staged.")
+    prog.empty()
 
     # Auto-detect site names from folder/filenames
     site_a, site_b = detect_sites(dir_a, dir_b)
