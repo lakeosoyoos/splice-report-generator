@@ -710,31 +710,66 @@ with st.sidebar:
         st.session_state.upload_key = old_key + 1
         st.rerun()
 
-    # ── Settings stripped ─────────────────────────────────────────────
-    # All threshold sliders were removed per tech direction.  The script
-    # now runs with the single set of gates documented in the latest
-    # SCRIPT_LOGIC_FLOWCHART.pdf:
-    #   • Reburn threshold 0.150 dB
-    #   • Bend: event ≥ 0.090 dB and > 150 m from closure (single yellow tier)
-    #   • Closure validation: loss-distribution only (gainer_frac < 0.05
-    #     AND median_loss > 0.100 dB → drop as phantom)
-    #   • Launch: reflectance > -50 dB (single orange tier; loss rule off)
-    #   • Field gainer: mid-span loss in [-0.7, 0] dB (mint-green tier)
-    #   • B usage: bidir averaging at real splices, plus past-break B-fill
-    #   • Dead-zone annotation for broken fibers where B also ends short
-    threshold   = REBURN_THRESHOLD
     ribbon_size = RIBBON_SIZE
 
     st.divider()
-    st.markdown(
-        "<div style='color:#ccc;font-size:11.5px;line-height:1.45;padding:4px 0;'>"
-        "Running with the current default gates (see "
-        "<b>SCRIPT_LOGIC_FLOWCHART.pdf</b>).  Thresholds are not adjustable "
-        "in the UI — the script is tuned against the tech's reference "
-        "reports."
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("### Thresholds for 1550 nm")
+
+    # ── EXFO-style threshold table ────────────────────────────────────
+    # Header row
+    hdr = st.columns([3.0, 0.7, 1.5, 1.5])
+    hdr[0].markdown("<div style='color:#fff;font-weight:700;font-size:12px;'>Description</div>", unsafe_allow_html=True)
+    hdr[1].markdown("<div style='color:#fff;font-weight:700;font-size:12px;text-align:center;'>Apply</div>", unsafe_allow_html=True)
+    hdr[2].markdown("<div style='color:#fff;font-weight:700;font-size:12px;'>Fail</div>", unsafe_allow_html=True)
+    hdr[3].markdown("<div style='color:#fff;font-weight:700;font-size:12px;'>Warning</div>", unsafe_allow_html=True)
+
+    def _thresh_row(label, default_apply, default_fail, default_warn,
+                    unit_suffix="dB", fmt="%.3f", step=0.001, key_prefix=""):
+        cols = st.columns([3.0, 0.7, 1.5, 1.5])
+        cols[0].markdown(
+            f"<div style='color:#fff;font-size:11.5px;padding-top:10px;'>{label}</div>",
+            unsafe_allow_html=True,
+        )
+        apply = cols[1].checkbox(
+            "apply", value=default_apply, key=f"th_{key_prefix}_apply",
+            label_visibility="collapsed",
+        )
+        fail = cols[2].number_input(
+            "fail", value=default_fail, format=fmt, step=step,
+            key=f"th_{key_prefix}_fail", label_visibility="collapsed",
+            disabled=not apply,
+        )
+        warn = cols[3].number_input(
+            "warn", value=default_warn, format=fmt, step=step,
+            key=f"th_{key_prefix}_warn", label_visibility="collapsed",
+            disabled=not apply,
+        )
+        return apply, fail, warn
+
+    # Rows — defaults taken from the EXFO screenshot
+    apply_uni_splice, fail_uni_splice, warn_uni_splice = _thresh_row(
+        "Unidir. splice loss", False, 0.300, 0.300, key_prefix="uni_splice")
+    apply_bi_splice,  fail_bi_splice,  warn_bi_splice  = _thresh_row(
+        "Bidir splice loss", True, 0.159, 0.159, key_prefix="bi_splice")
+    apply_uni_conn,   fail_uni_conn,   warn_uni_conn   = _thresh_row(
+        "Unidir. connector loss", True, 0.500, 0.500, key_prefix="uni_conn")
+    apply_bi_conn,    fail_bi_conn,    warn_bi_conn    = _thresh_row(
+        "Bidir connector loss", True, 0.500, 0.500, key_prefix="bi_conn")
+    apply_splitter,   fail_splitter,   warn_splitter   = _thresh_row(
+        "Splitter Loss", False, 4.500, 4.500, key_prefix="splitter")
+    apply_refl,       fail_refl,       warn_refl       = _thresh_row(
+        "Reflectance", True, -50.0, -50.0, fmt="%.1f", step=0.5, key_prefix="refl")
+    apply_fiber_atten, fail_fiber_atten, warn_fiber_atten = _thresh_row(
+        "Fiber section attenuation", False, 0.400, 0.400, key_prefix="fiber_atten")
+    apply_span_loss,  fail_span_loss,  warn_span_loss  = _thresh_row(
+        "Span loss", False, 20.000, 20.000, key_prefix="span_loss")
+    apply_span_length, fail_span_length, warn_span_length = _thresh_row(
+        "Span length", False, 0.0000, 0.0000, fmt="%.4f", step=0.1, key_prefix="span_length")
+    apply_span_orl,   fail_span_orl,   warn_span_orl   = _thresh_row(
+        "Span ORL", False, 15.00, 15.00, fmt="%.2f", step=0.5, key_prefix="span_orl")
+
+    # Bind to the script's internal names
+    threshold = fail_bi_splice    # REBURN threshold (pink cells)
 
     has_a = bool(uploaded_a)
     run_button = st.button("Generate Report", type="primary",
@@ -943,7 +978,15 @@ if run_button and has_a:
     bar.progress(0.30, text="Detecting launch-end issues...")
     first_splice_km = splices[0]['position_km'] if splices else None
     with redirect_stdout(log_buf):
-        launch_issues = detect_launch_issues(fibers_a, fibers_b, first_splice_km)
+        # Only apply the launch-refl gate if 'Reflectance' is checked; pass
+        # a permissive sentinel when unchecked so nothing flags on refl.
+        refl_threshold = fail_refl if apply_refl else -999.0
+        launch_issues = detect_launch_issues(
+            fibers_a, fibers_b, first_splice_km,
+            bad_refl_db=refl_threshold,
+        )
+        if not apply_refl:
+            launch_issues = {}   # fully disable launch flag if unchecked
 
     actual_span = 0
     if actual_span == 0:
@@ -978,6 +1021,25 @@ if run_button and has_a:
     # Field-gainer post-pass — flag mid-span events with loss in [-0.7, 0]
     with redirect_stdout(log_buf):
         apply_field_gainer_rule(all_results, actual_span)
+
+    # ── Apply the 'Apply' checkbox filters from the threshold table ──
+    # Categories unchecked in the sidebar are suppressed from the report.
+    def _keep(r):
+        # Bidir splice loss (pink A+B reburn)
+        is_reburn = (r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
+                     and not r.get('is_break') and not r.get('is_broke')
+                     and not r.get('is_bend')  and not r.get('is_bfill')
+                     and not r.get('is_a_only') and not r.get('is_b_only')
+                     and not r.get('is_gainer'))
+        if is_reburn and not apply_bi_splice:
+            return False
+        # Unidir splice loss (A-only + B-only cells)
+        if r.get('is_a_only') and not apply_uni_splice:
+            return False
+        if r.get('is_b_only') and not apply_uni_splice:
+            return False
+        return True
+    all_results = {k: v for k, v in all_results.items() if _keep(v)}
 
     n_reburn      = sum(1 for r in all_results.values()
                         if r.get('event_source') in ('bidir', 'bidir_grey_a', 'bidir_grey_b')
