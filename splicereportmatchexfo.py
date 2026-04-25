@@ -1029,12 +1029,13 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                 return
 
             # Launch-event loss check — signed comparison (no abs()).
-            # Healthy MFD-mismatch launches show a strong gainer (more negative
-            # than -0.5 dB).  Anything at -0.5 dB or weaker (closer to zero or
-            # any positive loss) is flagged.
+            # Healthy MFD-mismatch launches show a strong gainer at or below
+            # -0.5 dB (more negative).  Strict greater-than: a launch_loss
+            # of EXACTLY -0.5 dB is good (no flag); -0.49 dB is bad; -0.51
+            # dB is good.
             if launch_evt is not None:
                 launch_loss_signed = launch_evt.get('splice_loss') or 0.0
-                if launch_loss_signed >= hi_loss:    # default hi_loss = -0.5
+                if launch_loss_signed > hi_loss:    # default hi_loss = -0.5
                     tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
                 if refl > bad_refl:
