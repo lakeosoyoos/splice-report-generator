@@ -177,7 +177,13 @@ CLOSURE_VALID_MEDIAN_LOSS_MAX = 0.100   # dB — median loss inside the tight
 # at known closures) nor Pass 2 (B-direction scan) has anything to match on.
 # These fibers need to be flagged on their own so the tech knows to go look.
 #
-LAUNCH_HIGH_LOSS_DB          = 3.0    # launch connector loss >= this dB → issue
+LAUNCH_HIGH_LOSS_DB          = -0.5   # signed launch-event loss threshold.  Rule:
+                                      #   flag when launch_loss >= -0.5 dB (i.e.
+                                      #   value is at -0.5 or anywhere closer to
+                                      #   zero / positive).  Healthy MFD-mismatch
+                                      #   launches show a strong gainer (more
+                                      #   negative than -0.5 dB); anything weaker
+                                      #   than that gainer signature is anomalous.
 LAUNCH_BAD_REFL_DB           = -15.0  # launch reflectance stronger (closer to 0)
                                       #   than this → flag damaged/dirty connector.
                                       #   Refl is reported negative; healthy buried
@@ -186,6 +192,15 @@ LAUNCH_BAD_REFL_DB           = -15.0  # launch reflectance stronger (closer to 0
                                       #   (refl > -15) flags only the 0 to -15
                                       #   range — anomalously strong reflections
                                       #   that indicate connector damage.
+# ── FIELD-EVENT GAINER GATE ─────────────────────────────────────────────────
+# Mid-span events whose signed loss falls in the [-0.7, 0] dB range get
+# flagged as suspicious gainers — these are weak-gainer / near-zero events
+# that the regular bend rule would either miss (if |loss| < 0.090) or
+# silently fold into a normal splice column.  Excludes anything inside
+# LAUNCH_FIBER_MAX km of the launch or END_REGION_KM km of the fiber end —
+# those zones are evaluated separately by the launch / end logic.
+FIELD_GAINER_MIN_DB          = -0.7   # most-negative loss that still flags
+FIELD_GAINER_MAX_DB          = 0.0    # least-negative loss that still flags
 LAUNCH_REFL_OUTLIER_DB       = 10.0   # |fiber_refl − population_median| > this → issue
 LAUNCH_NO_FIRST_SPLICE_TOL_KM = 2.0   # km — must see an event within this of the
                                       #      first population closure
@@ -867,6 +882,66 @@ def _is_bend_event(event_pos_km, splice_center_km, loss):
     return abs(event_pos_km - splice_center_km) > CLOSURE_MATCH_KM
 
 
+def _is_field_gainer(event_pos_km, total_span_km, loss):
+    """Field-gainer rule: an event is flagged as a field gainer if its
+    signed loss falls in [FIELD_GAINER_MIN_DB, FIELD_GAINER_MAX_DB] (i.e.
+    -0.7 to 0 dB by default) AND its position is mid-span — at least
+    LAUNCH_FIBER_MAX km from the launch (so the launch-loss rule owns
+    it) and at least END_REGION_KM km before the fiber end (so the
+    end-of-fiber region doesn't pollute the flag)."""
+    if not (FIELD_GAINER_MIN_DB <= loss <= FIELD_GAINER_MAX_DB):
+        return False
+    if event_pos_km < LAUNCH_FIBER_MAX:
+        return False
+    if total_span_km > 0 and event_pos_km > (total_span_km - END_REGION_KM):
+        return False
+    return True
+
+
+def apply_field_gainer_rule(all_results, total_span_km):
+    """Post-pass annotator.  For every result that carries a usable loss
+    value and a usable position, check whether it lands in the field-
+    gainer range; if so, flag it with is_gainer=True and clear is_bend
+    (gainer takes priority over the geometric bend tag in the [-0.7, 0]
+    overlap range, per tech direction).
+
+    Skips results that are already break / broke / dead_zone — those
+    classifications win unconditionally."""
+    flagged = 0
+    for key, r in all_results.items():
+        if not isinstance(r, dict):
+            continue
+        if r.get('is_break') or r.get('is_broke') or r.get('is_dead_zone'):
+            continue
+        # Pick the most representative signed loss value.  Prefer the A
+        # direction's signed loss; fall back to bidir / B as needed.
+        a_loss = r.get('a_loss')
+        b_loss = r.get('b_loss')
+        bidir  = r.get('bidir_loss')
+        loss_signed = None
+        if a_loss is not None:
+            loss_signed = a_loss
+        elif bidir is not None:
+            loss_signed = bidir
+        elif b_loss is not None:
+            loss_signed = b_loss
+        if loss_signed is None:
+            continue
+        pos_km = r.get('bidir_dist') or r.get('a_dist') or r.get('position_km')
+        if pos_km is None:
+            continue
+        if _is_field_gainer(pos_km, total_span_km, loss_signed):
+            r['is_gainer'] = True
+            # Gainer wins over bend in the overlap range — strip the
+            # bend tag so the cell renders cleanly with the gainer fill.
+            if r.get('is_bend'):
+                r['is_bend'] = False
+                # event_source still 'a_only' / 'bidir' / etc.
+            r['is_flagged'] = True
+            flagged += 1
+    return flagged
+
+
 def _bend_severity(loss):
     # Severity tiers collapsed — every bend ≥ BEND_THRESHOLD is simply 'BEND'.
     return 'BEND'
@@ -953,11 +1028,14 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                 tags.append('NO_EVENTS')
                 return
 
-            # High-loss launch connector
+            # Launch-event loss check — signed comparison (no abs()).
+            # Healthy MFD-mismatch launches show a strong gainer (more negative
+            # than -0.5 dB).  Anything at -0.5 dB or weaker (closer to zero or
+            # any positive loss) is flagged.
             if launch_evt is not None:
-                launch_loss = abs(launch_evt.get('splice_loss') or 0.0)
-                if launch_loss >= hi_loss:
-                    tags.append(f'HIGH_LAUNCH_LOSS{launch_loss:+.2f}dB')
+                launch_loss_signed = launch_evt.get('splice_loss') or 0.0
+                if launch_loss_signed >= hi_loss:    # default hi_loss = -0.5
+                    tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
                 if refl > bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
@@ -1752,6 +1830,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                     'is_bend':  res.get('is_bend', False),
                     'is_bfill': res.get('is_bfill', False),
                     'is_dead_zone': res.get('is_dead_zone', False),
+                    'is_gainer': res.get('is_gainer', False),
                     'is_a_only': res.get('is_a_only', False),
                     'is_b_only': res.get('is_b_only', False),
                     'event_source': res.get('event_source', 'bidir'),
@@ -1842,6 +1921,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
         max_loss = max((g['loss'] for g in groups if g['loss'] is not None), default=0)
 
         is_dead_zone = any(g.get('is_dead_zone', False) for g in groups)
+        is_gainer    = any(g.get('is_gainer', False) for g in groups)
 
         cells[(ri, si)] = {
             'text': cell_text,
@@ -1850,6 +1930,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
             'is_bend':  is_bend,
             'is_bfill': is_bfill,
             'is_dead_zone': is_dead_zone,
+            'is_gainer': is_gainer,
             'is_a_only': is_a_only,
             'is_b_only': is_b_only,
             'est_bidir_flagged': est_bidir_flagged,
@@ -1935,6 +2016,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     bfill_font  = Font(size=8, color="1F4E79")
     dz_fill     = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")   # dead zone (gray)
     dz_font     = Font(size=8, italic=True, color="3F3F3F")
+    gainer_fill = PatternFill(start_color="A5D6A7", end_color="A5D6A7", fill_type="solid")   # field gainer (mint green)
+    gainer_font = Font(bold=True, size=8, color="1B5E20")
     aonly_fill  = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")   # A-only (light yellow, est bidir OK)
     aonly_font  = Font(size=8, color="7F6000")
     aonly_fill2 = PatternFill(start_color="FF7043", end_color="FF7043", fill_type="solid")   # A-only (coral, est bidir >= threshold) — deliberately non-yellow
@@ -2080,6 +2163,9 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                 elif cd.get('is_dead_zone'):
                     cell.fill = dz_fill
                     cell.font = dz_font
+                elif cd.get('is_gainer'):
+                    cell.fill = gainer_fill
+                    cell.font = gainer_font
                 elif cd.get('is_b_only'):
                     if cd.get('est_bidir_flagged'):
                         cell.fill = bonly_fill2
@@ -2113,7 +2199,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Lavender",   "E8D5F5", "4B0082", "B-only, est bidir OK — B saw it, no A entry. Estimated bidir (B/2) is below threshold. label: 'F# .xxx(B) ~.xxxbd'"),
         ("Purple",     "C084FC", "1A0033", "B-only, est bidir HIGH — B saw it, no A entry. Estimated bidir (B/2) still exceeds threshold. label: 'F# .xxx(B) ⚠.xxxbd'"),
         ("Yellow",     "FFEB3B", "5D4037", "BEND — event ≥ 0.090 dB at a position more than 150 m from the closure center.  Inspect conduit for pinch or tight bend."),
-        ("Orange",     "FFA500", "5D2E00", "LAUNCH — fiber has a launch-end issue (broken at launch, high launch loss, bad reflectance, empty event table, or missing file).  Single tier — no WATCH/REVIEW/HIGH split.  Appears in ILA column.  Distinct from pink A+B reburn."),
+        ("Orange",     "FFA500", "5D2E00", "LAUNCH — fiber has a launch-end issue.  Loss rule: launch_loss >= -0.5 dB (anything weaker than a -0.5 dB gainer flags).  Reflectance rule: refl > -15 dB (damaged / dirty connector).  Plus missing file, empty event table.  Single tier — no WATCH/REVIEW/HIGH split.  Appears in ILA column.  Distinct from pink A+B reburn."),
+        ("Mint Green", "A5D6A7", "1B5E20", "FIELD GAINER — mid-span event whose signed loss is in [-0.7, 0] dB (suspicious near-zero / weak-gainer event).  Excludes events within the launch zone or end-of-fiber region.  Overrides the geometric BEND tag in the [-0.7, -0.090] overlap range."),
     ]
     ws_leg.cell(row=1, column=1, value="Color").font = Font(bold=True, size=10)
     ws_leg.cell(row=1, column=2, value="Meaning").font = Font(bold=True, size=10)
@@ -2340,6 +2427,12 @@ def main():
     all_results = {**results, **a_standalone, **b_pastbreak}
     b_results = {**a_standalone, **b_pastbreak}  # kept for any downstream count code
 
+    # Field-gainer annotation — flag mid-span events whose signed loss
+    # falls in [-0.7, 0] dB (suspicious near-zero / weak-gainer events).
+    n_field_gainers = apply_field_gainer_rule(all_results, span_km)
+    print(f"  Field gainers: {n_field_gainers} (loss in "
+          f"[{FIELD_GAINER_MIN_DB}, {FIELD_GAINER_MAX_DB}] dB, mid-span)")
+
     n_total   = len(all_results)
     n_bend    = sum(1 for r in all_results.values() if r.get('is_bend'))
     n_bidir   = sum(1 for r in all_results.values()
@@ -2392,6 +2485,8 @@ def main():
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
     print(f"  B-only:       {n_b_only}  (purple) — B saw it, A did not  ← EXFO extra")
     print(f"  Bends:        {n_bend}  (yellow) — event >= {BEND_THRESHOLD:.3f} dB, > 150 m from closure center")
+    n_gainer = sum(1 for r in all_results.values() if r.get('is_gainer'))
+    print(f"  Field gainers:{n_gainer}  (mint)   — mid-span loss in [{FIELD_GAINER_MIN_DB}, {FIELD_GAINER_MAX_DB}] dB")
     print(f"  Launch:       {len(launch_issues)}  (orange) — launch-end issues (single tier)")
     print(f"  ──────────────────────────────────")
     print(f"  Total:        {n_total}")
