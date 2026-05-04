@@ -668,7 +668,8 @@ if not check_password():
 
 # ── Session state ─────────────────────────────────────────────────────────────
 
-for key in ["xlsx_bytes", "xlsx_name", "summary_data", "log_output", "done"]:
+for key in ["xlsx_bytes", "xlsx_name", "summary_data", "log_output", "done",
+            "zach_pdf_bytes", "zach_pdf_name"]:
     if key not in st.session_state:
         st.session_state[key] = None
 if "upload_key" not in st.session_state:
@@ -695,7 +696,7 @@ with st.sidebar:
         total_kb = sum(f.size for f in uploaded_a) / 1024
         st.caption(f"A: {len(uploaded_a)} file(s), {total_kb:.0f} KB total")
     uploaded_b = st.file_uploader(
-        "B-direction files (.sor, .json, or .zip, optional)",
+        "B-direction files (.sor, .json, or .zip)",
         type=["sor", "json", "zip"],
         accept_multiple_files=True,
         key=f"upload_b_{st.session_state.upload_key}",
@@ -713,13 +714,18 @@ with st.sidebar:
     # ── Settings locked to the flowchart-PDF defaults ────────────────
     # All threshold controls were removed per tech direction.  The
     # script runs with the gate set documented in
-    # SCRIPT_LOGIC_FLOWCHART.pdf:
-    #   • Reburn threshold 0.150 dB
-    #   • Bend: event ≥ 0.090 dB and > 150 m from closure (yellow)
+    # SCRIPT_LOGIC_FLOWCHART.pdf (April 28 revision):
+    #   • Reburn threshold 0.160 dB (pink A+B reburn)
+    #   • Bend: positive loss ≥ 0.090 dB AND offset > 150 m from per-
+    #     fiber splice km AND per-fiber length-model residual ≥ 150 m
+    #     AND narrow-LSA at predicted km shows real loss step (yellow)
+    #   • Field gainer: bidir avg in [-0.7, 0] dB AND both A+B real
+    #     measurements with opposite signs (mint)
+    #   • In-line REF: reflective + Fresnel + trace continues past
+    #     event (deep orange E64A19) — formerly tagged as BREAK
     #   • Closure validation: loss-distribution gate only
     #     (gainer_frac < 0.05 AND median_loss > 0.100 dB → phantom)
     #   • Launch: reflectance > -50 dB (orange; loss rule off)
-    #   • Field gainer: mid-span loss in [-0.7, 0] dB (mint)
     #   • Dead-zone annotation for broken fibers where B also ends short
     threshold   = REBURN_THRESHOLD
     ribbon_size = RIBBON_SIZE
@@ -736,8 +742,17 @@ with st.sidebar:
     )
 
     has_a = bool(uploaded_a)
+    has_b = bool(uploaded_b)
     run_button = st.button("Generate Report", type="primary",
-                           use_container_width=True, disabled=not has_a)
+                           use_container_width=True,
+                           disabled=not (has_a and has_b))
+    if has_a and not has_b:
+        st.caption(
+            ":warning: B-direction files required.  A splice report needs "
+            "both directions to compute the bidirectional average — "
+            "single-direction OTDR readings can be biased by gainers, "
+            "fiber-lot mismatches, and noise that the bidirectional average "
+            "cancels out.")
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -1016,6 +1031,27 @@ if run_button and has_a:
     with open(xlsx_path, 'rb') as f:
         st.session_state.xlsx_bytes = f.read()
     st.session_state.xlsx_name   = f"splice_report_{site_a}_{site_b}.xlsx"
+
+    # ── Build Zach's Explanation PDF (per-cell explanation, no tech compare) ──
+    try:
+        from make_zach_explanation import build_explanation_pdf
+        zach_path = os.path.join(xlsx_dir, "zach_explanation.pdf")
+        with redirect_stdout(log_buf):
+            build_explanation_pdf(
+                all_results, splices, launch_issues, actual_span,
+                site_a, site_b, zach_path,
+                ribbon_size=ribbon_size,
+                reburn_threshold=threshold,
+            )
+        with open(zach_path, 'rb') as f:
+            st.session_state.zach_pdf_bytes = f.read()
+        st.session_state.zach_pdf_name = (
+            f"zach_explanation_{site_a}_{site_b}.pdf")
+    except Exception as exc:
+        # Don't let a PDF-build failure block the xlsx delivery.
+        st.session_state.zach_pdf_bytes = None
+        st.session_state.zach_pdf_name = None
+        log_buf.write(f"\n[zach-explanation] failed: {exc}\n")
     st.session_state.summary_data = dict(
         n_fibers=n_fibers, n_splices=len(splices), actual_span=actual_span,
         threshold=threshold, n_flagged=len(all_results),
@@ -1050,25 +1086,44 @@ if st.session_state.get("done"):
     </div>
     """, unsafe_allow_html=True)
 
-    # Auto-download the Excel file on first render after the report completes,
-    # then fall back to a manual download button in case the browser blocked
-    # the auto-download.
+    # Auto-download the Excel file AND Zach's Explanation PDF on first render
+    # after the report completes.  Manual fallback download buttons for both
+    # in case the browser blocks the auto-download.
     if st.session_state.xlsx_bytes:
         import base64
         import streamlit.components.v1 as components
 
         just_generated = not st.session_state.get("downloaded_once", False)
         if just_generated:
-            b64 = base64.b64encode(st.session_state.xlsx_bytes).decode()
+            xlsx_b64 = base64.b64encode(st.session_state.xlsx_bytes).decode()
+            zach_bytes = st.session_state.get("zach_pdf_bytes")
+            zach_name  = st.session_state.get("zach_pdf_name")
+            zach_b64   = (base64.b64encode(zach_bytes).decode()
+                           if zach_bytes else None)
+            # Build a 2-link auto-download component.  Stagger the second
+            # click by ~600 ms so the browser treats it as a separate
+            # user-initiated download rather than collapsing both into one.
+            zach_block = ""
+            if zach_b64 and zach_name:
+                zach_block = f"""
+            <a id="auto_dl_pdf"
+               href="data:application/pdf;base64,{zach_b64}"
+               download="{zach_name}"></a>"""
+            zach_click = (
+                "setTimeout(() => {"
+                "  const p = document.getElementById('auto_dl_pdf');"
+                "  if (p) p.click();"
+                "}, 600);" if zach_b64 else ""
+            )
             components.html(f"""
             <html><body>
             <a id="auto_dl"
-               href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{b64}"
-               download="{st.session_state.xlsx_name}"></a>
+               href="data:application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;base64,{xlsx_b64}"
+               download="{st.session_state.xlsx_name}"></a>{zach_block}
             <script>
-              // Trigger the download as soon as the component mounts.
-              const link = document.getElementById('auto_dl');
-              if (link) {{ link.click(); }}
+              const xlsx = document.getElementById('auto_dl');
+              if (xlsx) {{ xlsx.click(); }}
+              {zach_click}
             </script>
             </body></html>
             """, height=0)
@@ -1076,16 +1131,27 @@ if st.session_state.get("done"):
 
         st.markdown("<br>", unsafe_allow_html=True)
         st.download_button(
-            "⬇  Download Again",
+            "⬇  Download Excel Again",
             st.session_state.xlsx_bytes,
             file_name=st.session_state.xlsx_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             use_container_width=True,
             type="primary",
         )
+        zach_bytes = st.session_state.get("zach_pdf_bytes")
+        zach_name  = st.session_state.get("zach_pdf_name")
+        if zach_bytes:
+            st.download_button(
+                "⬇  Download Zach's Explanation Again",
+                zach_bytes,
+                file_name=zach_name or "zach_explanation.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
         st.caption(
-            "The Excel report downloads automatically when it's ready. "
-            "If your browser blocked the auto-download, use the button above."
+            "Both files download automatically when ready: the Excel report "
+            "and Zach's Explanation PDF.  If your browser blocked either "
+            "auto-download, use the buttons above."
         )
 
 
@@ -1137,8 +1203,8 @@ else:
         <div class="tc-card" style="flex:1; margin-bottom:0;">
             <div class="tc-card-title">How To Use</div>
             <ul class="tc-list">
-                <li>Upload A-direction SOR files (required) and B-direction (optional) as a ZIP or individual files</li>
-                <li>Adjust the reburn threshold if needed - default is 0.150 dB</li>
+                <li>Upload A-direction and B-direction SOR/JSON files (both required) as a ZIP or individual files</li>
+                <li>Adjust the reburn threshold if needed - default is 0.160 dB</li>
                 <li>Use the <strong>Include in Report</strong> checkboxes to filter which event types appear in the output</li>
                 <li>Click <strong>Generate Report</strong> to download the color-coded Excel splice QC report</li>
             </ul>

@@ -178,6 +178,33 @@ def parse_otdr_json(filepath: str) -> dict:
             '_json_prev_section': prev_sec,
         })
 
+    # ── EndOfFiber sanity check ────────────────────────────────
+    # EXFO's auto-detector occasionally tags a high-loss SPLICE event
+    # (Loss = NaN, Type = Non-Reflective) as 'EndOfFiber, SpanEnd' even
+    # though the trace continues past it with usable backscatter.  Real
+    # fiber endpoints are nearly always reflective (the cleaved facet
+    # or the receive-fiber connector).  When we find an is_end event
+    # that is non-reflective AND a reflective event follows it later
+    # in the events list, demote the mis-flagged is_end and promote
+    # the trailing reflective event to is_end so b_span ends up at the
+    # actual far-end reflection.  Without this fix, fibers like F841
+    # (mis-flagged at B_km 80.45 when the real endpoint is at B_km
+    # 100.56) get an artificially short b_span and B-fill misses 20 km
+    # of recoverable splices.
+    for i, ev in enumerate(events):
+        if not ev['is_end']:
+            continue
+        if ev.get('is_reflective'):
+            continue   # a reflective is_end is plausibly real — don't touch it
+        # Non-reflective is_end — look ahead for a real reflective end
+        for j in range(i + 1, len(events)):
+            if events[j].get('is_reflective'):
+                events[j]['is_end'] = True
+                events[j]['_was_promoted_endoffiber'] = True
+                ev['is_end'] = False
+                ev['_was_demoted_endoffiber'] = True
+                break
+
     # Calibration block built from JSON parameters
     calibration = {
         'NominalPulseWidth': pulse_ns * 1e-9 if pulse_ns else 5e-7,
@@ -243,12 +270,15 @@ def measure_grey_loss_from_json(
 
     splice_m = splice_km * 1000.0
 
-    # Neighbour clamping: find closest event before and after this position
+    # Neighbour clamping: find closest event before and after this position.
+    # We INCLUDE is_end events in the clamping so the "after" window can't
+    # reach into the EOF connector reflection zone.  Skipping end events
+    # used to leave the LSA fit unbounded near the far end of a trace,
+    # which inflated the grey reading by ~1 dB on every near-end splice
+    # because the polynomial fit absorbed the EOF connector spike.
     prev_m = None
     next_m = None
     for e in json_data['events']:
-        if e['is_end']:
-            continue
         ep = e['dist_km'] * 1000.0
         if ep < splice_m - 10:
             prev_m = ep if prev_m is None else max(prev_m, ep)

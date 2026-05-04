@@ -1,63 +1,71 @@
 #!/usr/bin/env python3
 """
-splicereportmatchexfo_StevensReport_withBends_April20.py
-=========================================================
+splicereportmatchexfo_April28_AOrdered.py
+=========================================
 
-Splice QC report that:
-  • MATCHES EXFO FastReporter's bidirectional analysis via JSON-trace wide-LSA
-    (the algorithm that matches STEVEN'S REPORT on NEW-ELM 1152 within 0.001 dB
-    for the six target fibers F110, F161, F217, F468, F1024, F133).
-  • Adds BEND detection on top (ZeroDBIFTHEN Flag 3 rule).
-  • Adds LAUNCH-ISSUE detection so fibers broken / damaged at the launch end
-    can't silently disappear from the report.
+Splice QC report (April 28, 2026 revision).  Produces an EXFO-style
+bidirectional splice deliverable from OTDR JSON or SOR files.
 
-APRIL 20 REVISION:
-  - Built for the MIL-ELM data set Zach found bend losses in that the earlier
-    splice report was misclassifying as splice events.
-  - MIL-ELM is a new cable; STEVEN HAS NOT REVIEWED IT.  The Steven-report
-    reference in this script's name is to the ALGORITHM LINEAGE only (the
-    EXFO-match / Stevens-match logic we validated on NEW-ELM), not to any
-    ground-truth comparison on MIL-ELM.
+Core capabilities:
+  • Bidirectional splice analysis via JSON-trace wide-LSA — matches
+    EXFO FastReporter's internal LSA calculation for the agreed-on
+    target fibers within 0.001 dB.
+  • BEND detection — two-test classifier (per-fiber linear length
+    model + narrow-LSA confirmation) replaces the older flat
+    geometric offset rule; eliminates the fiber-length-variation
+    false positives that the old rule produced.
+  • In-line REFLECTIVE EVENT (ref) classification — reflective
+    events with strong Fresnel reflection where the trace continues
+    past the event are tagged 'ref' instead of 'BREAK', rendered in
+    deep orange with a label like 'F583 ref .862 (refl -29 dB)'.
+  • FIELD-GAINER detection — strict bidirectional rule: requires
+    both A and B real measurements with opposite signs, bidir avg
+    in [−0.7, 0] dB, mid-span position.
+  • LAUNCH-ISSUE detection — fibers broken / damaged at the launch
+    end appear in the dedicated ILA column.
+  • Past-A-break B-fill — recovers downstream splices on fibers
+    broken on the A side.
 
-What BEND detection adds:
-
-  * Closure centers are refined from the coarse 1 km bin to the MODE of
-    fiber event positions in that bin.
-  * For every flagged event, we measure the distance from the A-direction
-    event position to the refined closure center.
-  * If the offset is > 150 m AND the loss is >= 0.020 dB, the event is
-    classified as a BEND (not a splice reburn).  This matches the boss's
-    method from ZeroDBIFTHEN Flag 3.
-  * Bends render in teal on the Excel report (three shades by severity:
-    WATCH, REVIEW, HIGH) with a "BEND" label and the offset in metres.
-  * Bends do NOT terminate analysis — the script keeps walking through
-    later splices for the same fiber, same as it would past a clean splice.
-
-PASS 1 (same as splice report):
-  - For each fiber at each known splice closure position:
-      Find A event → find matching B event → compute bidirectional loss
-      Flag A-only events (no B match) if A loss >= threshold
-
-PASS 2 (new):
-  - For each fiber, scan ALL B-direction events above threshold
-  - Convert each to A-frame coordinates
-  - Skip any already caught in Pass 1
-  - Match to nearest splice position (within 1.5 km)
-  - If matching A event found: compute bidirectional loss → label A+B
-  - If no A event: flag as B-only
+APRIL 28 GATE SET (locked — see SCRIPT_LOGIC_FLOWCHART.pdf):
+  • Reburn threshold:   0.160 dB (pink A+B reburn)
+  • Bend threshold:     0.090 dB (positive signed loss required)
+  • Bend Test 1:        per-fiber length-model residual
+                          ≤ 50 m  → SPLICE
+                          ≥ 150 m → run Test 2
+                          else    → ambiguous (drop)
+  • Bend Test 2:        narrow-LSA at predicted km ≥ 0.030 dB
+                          → confirmed BEND
+                          else → drop
+  • Ref classifier:     reflective + Fresnel + trace continues past
+                          (≥1 real event downstream AND EOF ≥ 3 km
+                          farther) → ref (deep orange).  Otherwise
+                          → BREAK (red).
+  • Gainer rule:        bidir avg ∈ [−0.7, 0] dB AND both A and B
+                          are real event measurements (no grey-LSA)
+                          AND sign(A) ≠ sign(B).
 
 CELL LABELS:
-  325 .172        — standard A+B bidirectional splice (same as original report)
-  325 .340 (B)    — B-direction only saw this event; A-direction had nothing
-  325 .285 (A)    — A-direction only saw this event; no matching B entry
+  '325 .172'                          A+B bidirectional reburn (pink)
+  '325 .340 (B)'                       B-only event
+  '325 .285 (A)'                       A-only event
+  '583 ref .862 (refl -29 dB)'         in-line reflective event (deep orange)
+  '583 BREAK 0.862 ...'                 break (red) — trace ends near here
+  '229 broke@59.2k (B-fill OK)'        broke (red) — A trace terminated
+  '841 .390 (B)'                       B-fill recovery past A-break (blue)
 
 COLORS:
-  Pink   — A+B bidirectional reburn (loss >= threshold)
-  Red    — Break / Broke (both treated as physical damage; reflective
-            break or non-reflective crush both render with the red fill)
-  Blue   — B-fill (B-direction loss past a break, A-direction blind)
-  Yellow — A-only (A saw it, B did not)
-  Purple — B-only (B saw it, A did not)
+  Pink         — A+B reburn (≥ 0.160 dB bidir)
+  Red          — Break / Broke (physical damage)
+  Deep orange  — In-line REF event (reflective + Fresnel + trace continues)
+  Blue         — B-fill past A-break
+  Yellow       — Bend
+  Mint         — Field gainer
+  Coral        — A-only HIGH
+  Lt. yellow   — A-only OK
+  Purple       — B-only HIGH
+  Lavender     — B-only OK
+  Orange       — Launch issue
+  Gray         — Dead zone
 
 USAGE
 -----
@@ -65,14 +73,14 @@ USAGE
 
 OPTIONS
     --output PATH    Output Excel file (default: splice_report_exfo.xlsx)
-    --threshold dB   Flag threshold (default 0.150)
-    --site-a NAME    A-end site name (default TUL)
-    --site-b NAME    B-end site name (default BAR)
+    --threshold dB   Reburn threshold (default 0.160)
+    --site-a NAME    A-end site name
+    --site-b NAME    B-end site name
     --ribbon-size N  Fibers per ribbon (default 12)
 
 REQUIREMENTS
     pip install numpy openpyxl
-    sor_reader324802a.py must be in same directory.
+    sor_reader324802a.py and json_reader.py must be in same directory.
 """
 
 import os
@@ -80,6 +88,7 @@ import sys
 import argparse
 from collections import defaultdict
 
+import math
 import numpy as np
 
 try:
@@ -88,7 +97,7 @@ try:
 except ImportError:
     print("ERROR: pip install openpyxl"); sys.exit(1)
 
-from sor_reader324802a import parse_sor_full
+from sor_reader324802a import parse_sor_full, measure_grey_loss_from_sor
 # JSON-based grey-value measurement — matches EXFO's internal LSA calculation
 # (see json_reader.py for the algorithm details)
 from json_reader import (
@@ -102,7 +111,7 @@ from json_reader import (
 #  DEFAULTS
 # ═══════════════════════════════════════════════════════════════════════
 
-REBURN_THRESHOLD = 0.150   # dB — flag anything at or above
+REBURN_THRESHOLD = 0.160   # dB — flag anything at or above
 NOMINAL_SPLICE   = 0.159   # dB expected per splice
 RIBBON_SIZE      = 12      # fibers per ribbon
 POSITION_TOL     = 1.5     # km tolerance for matching A↔B events
@@ -129,6 +138,57 @@ GREY_LSA_INNER_M = 60      # m — inner dead zone on each side of splice
 #
 BEND_THRESHOLD        = 0.090   # dB — minimum loss to call an event a "bend"
 CLOSURE_MATCH_KM      = 0.150   # km — tight window; farther → classify as bend
+# ── Bend asymmetry gate (April 27 revision) ───────────────────────────────
+# A real macrobend at the closure is typically ASYMMETRIC in bidirectional
+# OTDR — most of the loss shows up in one direction's trace and the other
+# direction reads near-zero (or even slightly negative).  A position-mismatch
+# artifact (fiber whose splice km drifted from its ribbon population because
+# of fiber-length variation in the cable) is SYMMETRIC: both A→B and B→A
+# show the splice with normal magnitudes.  Requiring asymmetry kills the
+# fiber-length false positives without blinding us to real bends.
+#
+#   bend  ⇔  min(|a_loss|, |b_loss|) < BEND_ASYM_LOW
+#       AND max(|a_loss|, |b_loss|) ≥ BEND_THRESHOLD
+#
+# Only applied when BOTH a_loss and b_loss are available (i.e. true
+# bidirectional cases).  A-only / B-only events fall back to the geometric
+# offset test alone.
+BEND_ASYM_LOW         = 0.020   # dB — "near-zero" side of an asymmetric bend
+                                # (currently INERT — see _is_bend_event)
+# ── Per-fiber length model + trace inspection (April 28 revision) ──────────
+# Replaces the pure-geometric offset gate with a two-test classifier:
+#
+#   TEST 1 — Per-fiber linear length model.  Each fiber has its own
+#   length factor (slope ≈ 1.000 ± a few × 1e-3) due to helical lay
+#   and per-tube length variation.  We fit
+#       fiber_event_km = a · cable_splice_km + b
+#   through every (cable_km, event_km) pair this fiber has at any
+#   closure, EXCLUDING the closure being classified.  Predict where
+#   the splice should sit on this fiber, then compute the residual.
+#
+#       |residual| ≤ BEND_RES_SPLICE_M     → SPLICE  (never a bend)
+#       |residual| ≥ BEND_RES_BEND_M       → BEND candidate (run Test 2)
+#       in between                          → ambiguous (treat as splice;
+#                                              tech can review high-loss
+#                                              cases in the report)
+#
+#   TEST 2 — Narrow-LSA confirmation.  When Test 1 says BEND, run a
+#   narrow-window LSA (±BEND_NARROW_OUTER_M outer / ±BEND_NARROW_INNER_M
+#   inner) on the raw A trace at the predicted splice km.  If a real
+#   loss step is present there (≥ BEND_NARROW_LOSS_DB), the splice is
+#   confirmed at predicted_km AND a separate event exists at the
+#   candidate position → BEND.  If no loss at predicted_km, fall back
+#   to "ambiguous" (don't flag — single event of unclear nature).
+#
+# When fiber_data isn't JSON (SOR-only inputs), Test 2 isn't available
+# and a Test-1 BEND verdict is taken as the final answer.
+BEND_RES_SPLICE_M     = 50      # m — residual ≤ this → splice (Test 1)
+BEND_RES_BEND_M       = 150     # m — residual ≥ this → bend candidate
+BEND_NARROW_OUTER_M   = 5000    # m — Test-2 LSA outer window (now wide-LSA)
+BEND_NARROW_INNER_M   = 60      # m — Test-2 LSA dead zone
+BEND_NARROW_LOSS_DB   = 0.030   # dB — narrow-LSA threshold for "loss present"
+BEND_PERFIBER_WIN_KM  = 0.500   # km — per-fiber pair window around closure
+BEND_PERFIBER_MIN_FIT = 3       # min fit points (other closures) for the model
 # Severity tiers intentionally collapsed: any bend ≥ BEND_THRESHOLD is
 # rendered with the same yellow fill.  The old WATCH / REVIEW / HIGH
 # tiers are retained as constants only for backward-compatibility with
@@ -155,7 +215,7 @@ CLOSURE_VALID_TIGHT_FRAC = 0.13   # fraction of ALL fibers whose event is
                                    #   (typical tight_frac ≈ 0.05–0.12) while
                                    #   keeping real splices (≥ 0.15).
 
-# Additional April 23 closure-validity rules derived from raw-data analysis of
+# Additional closure-validity rules derived from raw-data analysis of
 # the Cle Elum → Yakima 18.89 km bend zone (tech flagged bends; we flagged
 # splice).  A real splice closure should look like random fusion-loss
 # variation — small median loss, SOME apparent gainers from MFD mismatch.
@@ -639,22 +699,38 @@ def load_all(dir_a, dir_b):
 # ═══════════════════════════════════════════════════════════════════════
 
 def _grey_loss(fiber_data, splice_km):
-    """Return the LSA-measured splice loss at `splice_km` from this fiber's
-    trace, or None if not available (SOR-only data, or trace region bad).
+    """Return the wide-LSA splice loss at `splice_km` from this fiber's
+    raw trace.  Dispatches on data source:
+      • JSON  → measure_grey_loss_from_json  (uses pre-stored trace +
+                resolution metadata).
+      • SOR   → measure_grey_loss_from_sor   (computes resolution from
+                the EXFO sampling-period in the proprietary calibration
+                block and detects pre-launch offset from the first-500-
+                sample minimum).
 
-    Uses wide-LSA (±5km outer, ±60m inner) matching EXFO's approach.
-    Only applicable when the fiber was loaded from JSON (the SOR's
-    single-acquisition trace typically saturates past ~34 km and can't
-    support LSA beyond that distance)."""
+    Both implementations return loss in dB (positive = real loss) and
+    have been validated to within ~5% of the event-table splice_loss
+    on bidirectional reburns (SANDUR May-1 cross-check).
+
+    Uses wide-LSA windows (±5 km outer, ±60 m inner) matching EXFO's
+    approach.  Returns None when the trace isn't available or the LSA
+    can't fit (saturation, near-end clipping, etc.)."""
     if fiber_data is None:
         return None
-    if fiber_data.get('_source') != 'json':
-        return None
-    return measure_grey_loss_from_json(
-        fiber_data, splice_km,
-        outer_m=GREY_LSA_OUTER_M,
-        inner_m=GREY_LSA_INNER_M,
-    )
+    src = fiber_data.get('_source')
+    if src == 'json':
+        return measure_grey_loss_from_json(
+            fiber_data, splice_km,
+            outer_m=GREY_LSA_OUTER_M,
+            inner_m=GREY_LSA_INNER_M,
+        )
+    if src == 'sor':
+        return measure_grey_loss_from_sor(
+            fiber_data, splice_km,
+            outer_m=GREY_LSA_OUTER_M,
+            inner_m=GREY_LSA_INNER_M,
+        )
+    return None
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -662,10 +738,30 @@ def _grey_loss(fiber_data, splice_km):
 # ═══════════════════════════════════════════════════════════════════════
 
 def discover_splices(fibers_a):
+    """Bin every fiber's mid-span splice events into 1 km buckets and
+    keep buckets that have >= MIN_POP_SPLICE entries.
+
+    Filters applied per-fiber before binning:
+      • Skip events whose distance is below 1 km (launch zone).
+      • Skip end-of-fiber events directly (1E / 0E types).
+      • Skip events that occur AFTER the fiber's first end-of-fiber
+        marker.  EXFO event detectors sometimes emit spurious "0F"
+        non-end events in the post-EOL trace tail (instrument noise
+        after the receive connector) — every fiber tends to have one
+        at the same km, which cluster into a phantom closure right
+        at the cable boundary.  This guard drops them.
+    """
     bins = defaultdict(list)
     for fnum, r in fibers_a.items():
+        # First end-of-fiber marker; events past this aren't real splices.
+        eof_km = None
+        for e in r['events']:
+            if e.get('is_end'):
+                eof_km = e['dist_km']
+                break
         for e in r['events']:
             if e['dist_km'] < 1.0 or e['is_end']: continue
+            if eof_km is not None and e['dist_km'] >= eof_km: continue
             if not e['type'].startswith('0F') and not e['type'].startswith('1F'): continue
             bk = round(e['dist_km'])
             bins[bk].append(e['dist_km'])
@@ -731,7 +827,7 @@ def refine_closure_centers(fibers_a, splices, validate=True,
         is_real_closure     : True iff tight enough to be a real splice
 
     When validate=True, clusters that fail the tightness tests are
-    REMOVED from the returned list (April 23 revision: phantom closures
+    REMOVED from the returned list (phantom closures
     at bend/damage zones no longer get splice columns).
     """
     std_max   = CLOSURE_VALID_STD_MAX_M      if valid_std_max_m      is None else valid_std_max_m
@@ -740,19 +836,50 @@ def refine_closure_centers(fibers_a, splices, validate=True,
     med_max   = CLOSURE_VALID_MEDIAN_LOSS_MAX if valid_median_loss_max is None else valid_median_loss_max
     n_fibers_total = len(fibers_a) or 1
 
+    # Cable span (top-25% median of A-side end-of-fiber distances) — used
+    # to filter out phantom closures that sit within END_REGION_KM of the
+    # cable end.  A "splice" at km > span − END_REGION_KM mirrors to a
+    # B-frame position inside the B-launch dead zone; grey-LSA at that
+    # mirrored position reads bogus values from the launch reflection
+    # and inflates the bidir-grey-B reburn count.
+    eof_kms = []
+    for r in fibers_a.values():
+        for e in r.get('events', []):
+            if e.get('is_end'):
+                eof_kms.append(e['dist_km'])
+                break
+    eof_kms.sort()
+    cable_span_est = (np.median(eof_kms[int(len(eof_kms)*0.75):])
+                      if eof_kms else 0)
+    end_cutoff_km = (cable_span_est - END_REGION_KM
+                     if cable_span_est > 0 else float('inf'))
+
     out = []
     dropped = []
     for sp in splices:
+        # Filter near-end phantom closures
+        sp_pos = sp.get('position_km_refined', sp['position_km'])
+        if sp_pos > end_cutoff_km:
+            # End-region phantoms are dropped entirely — they don't get
+            # added to the bend/damage phantom-zone list (which becomes
+            # columns in the report).  Print a short note so the operator
+            # can see what happened, but otherwise discard.
+            print(f"  Dropped end-region phantom closure at {sp_pos:.2f} km "
+                  f"(within {END_REGION_KM:.0f} km of {cable_span_est:.2f} km cable end)")
+            continue
         center_guess = sp['position_km']
-        nearby = []          # positions (km)
+        nearby = []          # positions (km) — global pool
         nearby_losses = []   # losses (signed, dB) paired with nearby[]
-        for r in fibers_a.values():
+        per_ribbon_pos = {}  # ribbon_idx → list of positions (km) for that ribbon
+        for fnum, r in fibers_a.items():
+            rib_idx = (fnum - 1) // RIBBON_SIZE
             for e in r['events']:
                 if e['dist_km'] < 1.0 or e['is_end']:
                     continue
                 if abs(e['dist_km'] - center_guess) < 1.0:
                     nearby.append(e['dist_km'])
                     nearby_losses.append(e.get('splice_loss') or 0.0)
+                    per_ribbon_pos.setdefault(rib_idx, []).append(e['dist_km'])
 
         if not nearby:
             sp['position_km_refined'] = center_guess
@@ -783,6 +910,75 @@ def refine_closure_centers(fibers_a, splices, validate=True,
         sp['position_spread_m']   = float(arr.max() - arr.min()) * 1000
         sp['position_std_m']      = float(np.std(arr)) * 1000
 
+        # ── Steven-style display position ───────────────────────────────
+        # Steven's column-header convention: walk fibers in numerical
+        # order, take the FIRST (lowest-numbered) fiber that has an event
+        # within ±CLOSURE_MATCH_KM of the refined closure center, and use
+        # that fiber's exact event distance — truncated (not rounded) to
+        # 0.01 km (10 m) precision.  This is what appears across the top
+        # of his hand-prepared report.
+        display_km = None
+        display_src_fiber = None
+        for fnum in sorted(fibers_a.keys()):
+            r = fibers_a[fnum]
+            for e in r['events']:
+                if e.get('is_end') or e['dist_km'] < 1.0:
+                    continue
+                if abs(e['dist_km'] - refined) < CLOSURE_MATCH_KM:
+                    display_km = e['dist_km']
+                    display_src_fiber = fnum
+                    break
+            if display_km is not None:
+                break
+        if display_km is None:
+            display_km = refined  # fallback (shouldn't happen for real closures)
+        # Truncate to 10 m (0.01 km) precision — floor toward zero
+        sp['position_km_display']        = math.floor(display_km * 100) / 100.0
+        sp['position_km_display_raw']    = display_km
+        sp['position_km_display_fiber']  = display_src_fiber
+
+        # ── Per-ribbon refinement ────────────────────────────────────
+        # Multi-tube cables have systematic per-tube path-length
+        # offsets (different helical pitches around the central
+        # strength member).  Refine each ribbon's expected closure
+        # position INDEPENDENTLY of the global pool, so that an event
+        # in a ribbon whose tube runs ~50 m longer than the cable
+        # average isn't mis-flagged as a bend just because it falls
+        # outside CLOSURE_MATCH_KM of the global median.
+        #
+        # Algorithm per ribbon:
+        #   1. Take all events in this ribbon's ±1 km window around the
+        #      original splice position.
+        #   2. Find the densest 50 m bin (the ribbon's local mode peak).
+        #   3. Median the events within ±CLOSURE_MATCH_KM of that peak —
+        #      that's the ribbon's true expected closure km.
+        #   4. Need at least 3 events to trust the per-ribbon value;
+        #      ribbons with fewer events fall back to the global refined
+        #      position so they still get *some* center to test against.
+        per_ribbon_refined = {}
+        bin_km_rib = CLOSURE_MODE_BIN_M / 1000.0
+        for rib_idx, positions in per_ribbon_pos.items():
+            if len(positions) < 3:
+                continue
+            arr_r = np.array(positions)
+            # Local mode peak — independent of the global refined center
+            nbins_r = max(3, int(np.ceil((arr_r.max() - arr_r.min()) / bin_km_rib)))
+            if arr_r.max() == arr_r.min():
+                rib_peak = float(arr_r[0])
+            else:
+                hist_r, edges_r = np.histogram(
+                    arr_r, bins=nbins_r,
+                    range=(arr_r.min(), arr_r.max()))
+                pk_r = int(np.argmax(hist_r))
+                rib_peak = (edges_r[pk_r] + edges_r[pk_r + 1]) / 2.0
+            # Median around the ribbon's own peak (NOT the global refined km)
+            mask_r = np.abs(arr_r - rib_peak) < CLOSURE_MATCH_KM
+            if mask_r.sum() >= 3:
+                per_ribbon_refined[rib_idx] = float(np.median(arr_r[mask_r]))
+            else:
+                per_ribbon_refined[rib_idx] = float(np.median(arr_r))
+        sp['position_km_refined_by_ribbon'] = per_ribbon_refined
+
         # Tightness: fraction of fibers whose event is within ±CLOSURE_MATCH_KM
         tight_mask = np.abs(arr - refined) < CLOSURE_MATCH_KM
         tight_count = int(tight_mask.sum())
@@ -791,7 +987,7 @@ def refine_closure_centers(fibers_a, splices, validate=True,
         tight_std_m = float(np.std(arr[tight_mask])) * 1000 if tight_count > 3 else 999.0
         sp['tight_std_m'] = tight_std_m
 
-        # Loss-distribution rules (April 23 anti-phantom-closure):
+        # Loss-distribution rules (anti-phantom-closure):
         # collect losses of events INSIDE the tight window; compute gainer
         # fraction and median loss
         loss_arr = np.array(nearby_losses)
@@ -869,13 +1065,287 @@ def refine_closure_centers(fibers_a, splices, validate=True,
     return out
 
 
-def _is_bend_event(event_pos_km, splice_center_km, loss):
-    """Apply ZeroDBIFTHEN Flag-3 rule: an event is a BEND if its loss is
-    above BEND_THRESHOLD AND its position is more than CLOSURE_MATCH_KM
-    away from the splice closure center."""
-    if abs(loss) < BEND_THRESHOLD:
+def _closure_km_for_fiber(sp, fiber_num, ribbon_size=RIBBON_SIZE):
+    """Return the closure km this fiber's bend-vs-splice geometry test
+    should use.  If the splice has a per-ribbon refined position for the
+    fiber's ribbon, prefer it; otherwise fall back to the global refined
+    position, then to the original position_km."""
+    rib_idx = (fiber_num - 1) // ribbon_size
+    by_rib = sp.get('position_km_refined_by_ribbon') or {}
+    if rib_idx in by_rib:
+        return by_rib[rib_idx]
+    return sp.get('position_km_refined', sp['position_km'])
+
+
+def _bend_reference_km(sp, fnum, fiber_events,
+                       ribbon_size=RIBBON_SIZE,
+                       search_window_km=0.5):
+    """Return the bend-detection reference km for one (splice, fiber)
+    pair.  Tries per-fiber nearest-event first, then per-ribbon refined
+    median, then global refined position.  This is the value bend
+    geometry tests + label offsets should be measured against."""
+    closure_center = _closure_km_for_fiber(sp, fnum, ribbon_size)
+    per_fiber = _per_fiber_splice_km(fiber_events, closure_center,
+                                      search_window_km=search_window_km)
+    if per_fiber is not None:
+        return per_fiber
+    return closure_center
+
+
+def _per_fiber_splice_km(fiber_events, closure_center_km,
+                         search_window_km=0.5,
+                         exclude_pos_km=None,
+                         exclude_tol_m=1.0):
+    """Find this specific fiber's own splice km at a given closure.
+
+    Bend-detection only.  Walks every event in this fiber's event list
+    and returns the distance of the event NEAREST to the closure
+    center within ±search_window_km (default 500 m).  That event's
+    distance is taken as the fiber's true splice position — the
+    candidate event being classified is then measured against it,
+    not against a ribbon or global aggregate.
+
+    When ``exclude_pos_km`` is supplied, any event within
+    ``exclude_tol_m`` metres of that position is skipped.  Use this in
+    Pass 2a/2b so the candidate event being tested doesn't anchor the
+    reference to itself (which would make every offset zero and the
+    bend gate trivially pass for any event).
+
+    Returns the fiber's nearest-event distance in km, or None if no
+    event lies within the search window (caller should fall back to
+    the ribbon/global center in that case).
+    """
+    nearest_km = None
+    nearest_d = search_window_km
+    excl_tol_km = exclude_tol_m / 1000.0
+    for e in fiber_events:
+        if e.get('is_end') or e['dist_km'] < 1.0:
+            continue
+        if (exclude_pos_km is not None and
+                abs(e['dist_km'] - exclude_pos_km) < excl_tol_km):
+            continue
+        d = abs(e['dist_km'] - closure_center_km)
+        if d < nearest_d:
+            nearest_d = d
+            nearest_km = e['dist_km']
+    return nearest_km
+
+
+def _perfiber_residual_m(fiber_data, all_closure_kms, candidate_event_km):
+    """Test 1 — per-fiber linear length model (leave-one-out).
+
+    For the supplied fiber, find its nearest event (within
+    ±BEND_PERFIBER_WIN_KM) at every closure.  Build (cable_km,
+    event_km) pairs.  Identify which closure the candidate event
+    belongs to (the one whose pair contains the candidate; if the
+    candidate isn't paired because it's >500 m from every closure,
+    use the nearest closure to the candidate).  Fit a line through
+    the *other* closures' pairs and predict event_km at the target
+    closure.  Return (residual_m, predicted_km, n_fit_pts).
+
+    Returns (None, None, 0) when there are fewer than
+    BEND_PERFIBER_MIN_FIT other closures with a paired event — in
+    that case the model can't be fit and the caller should fall back.
+    """
+    if fiber_data is None or not all_closure_kms:
+        return (None, None, 0)
+    events = fiber_data.get('events') or []
+    real = [e for e in events
+            if not e.get('is_end') and e['dist_km'] >= 1.0]
+    if not real:
+        return (None, None, 0)
+
+    pairs = []   # list of (si, cable_km, event_km)
+    target_si = None
+    for si, ck in enumerate(all_closure_kms):
+        nearest = None
+        for e in real:
+            d = abs(e['dist_km'] - ck)
+            if d <= BEND_PERFIBER_WIN_KM and (nearest is None or d < nearest[1]):
+                nearest = (e['dist_km'], d)
+        if nearest is not None:
+            pairs.append((si, ck, nearest[0]))
+            if abs(nearest[0] - candidate_event_km) < 0.001:
+                target_si = si
+
+    if target_si is None:
+        # Candidate didn't sit within ±500 m of any closure — assign it
+        # to the nearest closure for prediction purposes.
+        best_si, best_d = None, float('inf')
+        for si, ck in enumerate(all_closure_kms):
+            d = abs(ck - candidate_event_km)
+            if d < best_d:
+                best_si, best_d = si, d
+        target_si = best_si
+
+    if target_si is None:
+        return (None, None, 0)
+
+    fit_pts = [(c, e) for si, c, e in pairs if si != target_si]
+    if len(fit_pts) < BEND_PERFIBER_MIN_FIT:
+        return (None, None, len(fit_pts))
+
+    xs = np.array([c for c, _ in fit_pts])
+    ys = np.array([e for _, e in fit_pts])
+    a, b = np.polyfit(xs, ys, 1)
+    target_cable_km = all_closure_kms[target_si]
+    predicted_km = float(a * target_cable_km + b)
+    residual_m = (candidate_event_km - predicted_km) * 1000.0
+    return (residual_m, predicted_km, len(fit_pts))
+
+
+def _narrow_lsa_loss(fiber_data, position_km):
+    """Test 2 — LSA at a specific position on this fiber's raw trace.
+    Returns the loss in dB (positive = loss) or None when the trace
+    isn't available or the LSA can't fit.
+
+    NOTE (May 2 revision): originally used very-narrow windows
+    (±100 m outer, ±15 m inner) but those land inside the OTDR's
+    pulse-width smear zone (~127 m at 2.5 µs pulse), producing
+    unreliable readings on SOR data.  Empirical tests showed the
+    wide-LSA windows (±5000 m outer, ±60 m inner) produce both:
+      • a clean off-event noise floor of < 0.005 dB on SOR
+      • accurate splice-step readings (within 5% of event-table)
+    Neighbor clamping in the underlying LSA handles bleed-in from
+    nearby events automatically, so a candidate event ~200 m off
+    the predicted km doesn't pollute the predicted-km reading.
+
+    Dispatches on data source — both JSON and SOR are now supported
+    for Test 2 confirmation."""
+    if fiber_data is None:
+        return None
+    src = fiber_data.get('_source')
+    try:
+        if src == 'json':
+            return measure_grey_loss_from_json(
+                fiber_data, position_km,
+                outer_m=BEND_NARROW_OUTER_M,
+                inner_m=BEND_NARROW_INNER_M,
+            )
+        if src == 'sor':
+            return measure_grey_loss_from_sor(
+                fiber_data, position_km,
+                outer_m=BEND_NARROW_OUTER_M,
+                inner_m=BEND_NARROW_INNER_M,
+            )
+    except Exception:
+        return None
+    return None
+
+
+def _is_bend_event(event_pos_km, splice_center_km, loss,
+                   fiber_events=None, a_loss=None, b_loss=None,
+                   closure_kms=None, fiber_data=None):
+    """Bend classifier (April 28 revision — per-fiber length model
+    + narrow-LSA trace inspection).
+
+    Pipeline:
+      1. Loss must be POSITIVE (real attenuation) AND ≥ BEND_THRESHOLD.
+         A bend physically removes light from the fiber, so a real
+         bend always shows positive signed loss.  Negative readings
+         are gainer signatures or LSA artifacts — never bends.
+      2. Geometric offset gate (legacy filter, kept as a cheap first
+         cut): the event must lie more than ``CLOSURE_MATCH_KM`` from
+         the fiber's nearest other splice event.  Events sitting
+         right where the fiber's primary splice was already detected
+         are not bends — they're the splice itself.
+      3. **Test 1 — per-fiber linear length model.**  When
+         ``closure_kms`` and ``fiber_data`` are both supplied, fit a
+         line through this fiber's (cable_km, event_km) pairs at
+         every *other* closure and predict where the splice should
+         sit at the candidate's closure.
+            • |residual| ≤ BEND_RES_SPLICE_M  → SPLICE  (return False)
+            • |residual| ≥ BEND_RES_BEND_M    → run Test 2
+            • otherwise (ambiguous)             → SPLICE  (conservative)
+      4. **Test 2 — narrow-LSA at predicted_km.**  A real bend means
+         the splice lives at predicted_km AND a separate event lives
+         at the candidate position.  Confirm by reading a narrow LSA
+         on the raw A trace at the predicted km; if it shows a real
+         loss step (≥ BEND_NARROW_LOSS_DB) the bend is confirmed.
+         If the trace isn't available (SOR data), Test 1 alone wins.
+
+    a_loss / b_loss / asymmetry gate parameters are accepted for
+    backward compatibility but are currently inert.
+    """
+    if loss < BEND_THRESHOLD:
+        return False  # negative or sub-threshold → not a bend
+
+    # ── Step 2: geometric offset gate (legacy first cut) ──
+    reference_km = splice_center_km
+    if fiber_events is not None:
+        per_fiber_km = _per_fiber_splice_km(fiber_events, splice_center_km)
+        if per_fiber_km is not None:
+            reference_km = per_fiber_km
+    if abs(event_pos_km - reference_km) <= CLOSURE_MATCH_KM:
         return False
-    return abs(event_pos_km - splice_center_km) > CLOSURE_MATCH_KM
+
+    _ = (a_loss, b_loss)  # asymmetry gate currently inert
+
+    # ── Step 3: Test 1 — per-fiber linear length model ──
+    if closure_kms is not None and fiber_data is not None:
+        residual_m, predicted_km, _n_fit = _perfiber_residual_m(
+            fiber_data, closure_kms, event_pos_km)
+        if residual_m is not None:
+            ares = abs(residual_m)
+            if ares <= BEND_RES_SPLICE_M:
+                return False        # fits the fiber's pattern → splice
+            if ares < BEND_RES_BEND_M:
+                return False        # ambiguous → conservative: not a bend
+            # Test-1 says BEND.  Step 4 confirms via wide-LSA at the
+            # predicted km.  Both JSON and SOR are supported.  We
+            # require POSITIVE evidence — when the LSA fails to fit
+            # (returns None) or returns a sub-threshold magnitude, we
+            # drop the candidate (conservative).  Confirming via
+            # absence-of-evidence inflates the bend count when the LSA
+            # is inadvertently asked to fit near saturated regions or
+            # at positions overlapping a known event's neighbor-clamp
+            # zone.
+            pred_loss = _narrow_lsa_loss(fiber_data, predicted_km)
+            if pred_loss is None or abs(pred_loss) < BEND_NARROW_LOSS_DB:
+                return False
+            return True
+        # Insufficient pairs to fit — fall through to legacy gate
+
+    # ── Fallback: legacy geometric offset gate already passed above ──
+    return True
+
+
+def _trace_continues_past(fiber_events, position_km, total_span_km,
+                          min_continuation_km=3.0,
+                          min_distance_to_eof_km=3.0):
+    """Return True iff this fiber's trace clearly continues past
+    `position_km`.  Used to distinguish a real BREAK (fiber ends or
+    quits within a few km past this point) from an in-line REFLECTIVE
+    EVENT (a connector / mechanical splice / angled-cleave joint that
+    produces a Fresnel reflection but light keeps traveling through).
+
+    Conditions for "continues":
+      • At least one non-end event exists past `position_km`, AND
+      • The fiber's end-of-fiber marker (if present) is at least
+        `min_distance_to_eof_km` past `position_km`.
+
+    Falls back to "True" when EOF can't be determined and there's a
+    downstream event — better to mis-call a real break as a ref event
+    (visible via the strong reflection number on the cell) than to
+    label a healthy connector as BREAK and panic the tech.
+    """
+    if not fiber_events:
+        return False
+    eof_km = None
+    for e in fiber_events:
+        if e.get('is_end'):
+            ek = e['dist_km']
+            if eof_km is None or ek < eof_km:
+                eof_km = ek
+    has_event_past = any(
+        (not e.get('is_end')) and e['dist_km'] > position_km + 0.05
+        for e in fiber_events
+    )
+    if not has_event_past:
+        return False
+    if eof_km is not None and eof_km - position_km < min_distance_to_eof_km:
+        return False
+    return True
 
 
 def _is_field_gainer(event_pos_km, total_span_km, loss):
@@ -895,46 +1365,76 @@ def _is_field_gainer(event_pos_km, total_span_km, loss):
 
 
 def apply_field_gainer_rule(all_results, total_span_km):
-    """Post-pass annotator.  For every result that carries a usable loss
-    value and a usable position, check whether it lands in the field-
-    gainer range; if so, flag it with is_gainer=True and clear is_bend
-    (gainer takes priority over the geometric bend tag in the [-0.7, 0]
-    overlap range, per tech direction).
+    """Post-pass annotator.  Classify an event as a true field-gainer
+    only when the BIDIRECTIONAL signature matches: a real gainer
+    averages near zero (or slightly negative) because the two
+    directions report opposite-signed losses of similar magnitude.
 
-    Skips results that are already break / broke / dead_zone — those
-    classifications win unconditionally."""
+    Rules (April 28 revision — strict):
+      • The BIDIRECTIONAL average must lie in
+        [FIELD_GAINER_MIN_DB, FIELD_GAINER_MAX_DB] (i.e. [−0.7, 0] dB).
+      • BOTH a_loss AND b_loss must be present AND must be REAL
+        event measurements (neither side came from wide-LSA grey).
+        A gainer's whole definition is bidirectional, so we refuse
+        to flag based on a single direction or on a grey-LSA noise
+        reading.
+      • The two directional losses MUST have OPPOSITE signs — the
+        canonical gainer fingerprint (A reads negative because the
+        scattering coefficient rises; B reads positive because going
+        the other way it falls).  Same-sign A and B is an LSA
+        artifact (slope mismatch in surrounding fiber), not a gainer.
+      • Position must be mid-span (existing geometry rule).
+
+    Skips results already classified as break / broke / dead_zone —
+    those classifications win unconditionally.
+    """
     flagged = 0
     for key, r in all_results.items():
         if not isinstance(r, dict):
             continue
         if r.get('is_break') or r.get('is_broke') or r.get('is_dead_zone'):
             continue
-        # Pick the most representative signed loss value.  Prefer the A
-        # direction's signed loss; fall back to bidir / B as needed.
+        if r.get('is_ref'):
+            continue  # ref cells stand on their own — never demote to gainer
         a_loss = r.get('a_loss')
         b_loss = r.get('b_loss')
         bidir  = r.get('bidir_loss')
-        loss_signed = None
-        if a_loss is not None:
-            loss_signed = a_loss
-        elif bidir is not None:
-            loss_signed = bidir
-        elif b_loss is not None:
-            loss_signed = b_loss
-        if loss_signed is None:
+
+        # Hard requirement: both directions present AND both real
+        # event measurements (not wide-LSA grey).  A gainer is
+        # bidirectional by definition; refuse to call it on a single
+        # direction or on a grey-LSA noise reading.
+        if a_loss is None or b_loss is None or bidir is None:
             continue
+        if r.get('_a_is_grey') or r.get('_b_is_grey'):
+            continue
+        if r.get('_a_source') == 'grey_lsa' or r.get('_b_source') == 'grey_lsa':
+            continue
+
         pos_km = r.get('bidir_dist') or r.get('a_dist') or r.get('position_km')
         if pos_km is None:
             continue
-        if _is_field_gainer(pos_km, total_span_km, loss_signed):
-            r['is_gainer'] = True
-            # Gainer wins over bend in the overlap range — strip the
-            # bend tag so the cell renders cleanly with the gainer fill.
-            if r.get('is_bend'):
-                r['is_bend'] = False
-                # event_source still 'a_only' / 'bidir' / etc.
-            r['is_flagged'] = True
-            flagged += 1
+
+        # Bidirectional range gate (mid-span position check inside)
+        if not _is_field_gainer(pos_km, total_span_km, bidir):
+            continue
+
+        # Canonical gainer signature: A and B have OPPOSITE signs.
+        # Use a 1 milli-dB dead-zone so an exactly-zero side doesn't
+        # ambiguously qualify.
+        EPS = 0.001
+        sign_a = 1 if a_loss > EPS else (-1 if a_loss < -EPS else 0)
+        sign_b = 1 if b_loss > EPS else (-1 if b_loss < -EPS else 0)
+        if sign_a == sign_b or sign_a == 0 or sign_b == 0:
+            continue  # same-sign / near-zero → not a real gainer
+
+        r['is_gainer'] = True
+        # Gainer wins over bend in the overlap range — strip the
+        # bend tag so the cell renders cleanly with the gainer fill.
+        if r.get('is_bend'):
+            r['is_bend'] = False
+        r['is_flagged'] = True
+        flagged += 1
     return flagged
 
 
@@ -1097,6 +1597,10 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
     closure_match_km = CLOSURE_MATCH_KM if closure_match_km is None else float(closure_match_km)
     results = {}
 
+    # Closure km list (for per-fiber length model in _is_bend_event)
+    closure_kms_all = [sp.get('position_km_refined', sp['position_km'])
+                       for sp in splices]
+
     # End-of-fiber distances for broke detection
     eof_a = {}
     for fnum, r in fibers_a.items():
@@ -1160,9 +1664,16 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
 
             # ── Broke detection ──
             fiber_end = eof_a[fnum]
-            a_plus_b = fiber_end + eof_b.get(fnum, 0) if fnum in eof_b else 0
-            is_mid_span_break = (a_plus_b > 0 and
-                                 abs(a_plus_b - total_span_a) < 3.0 and
+            # Broke detection: A trace ends mid-span (more than END_REGION_KM
+            # short of the cable end).  We deliberately do NOT require the
+            # B trace to also be truncated — for high-loss splices that
+            # only stop A's auto-detector but not the actual signal, B
+            # may legitimately see all the way through (e.g. F841 in
+            # SANDUR — A quits at km 20.14, B reaches the far-end
+            # reflection at km 100.56).  The earlier "a_plus_b ≈
+            # total_span" guard would mis-classify such fibers as healthy
+            # when they have a real high-loss event on A.
+            is_mid_span_break = (fiber_end > 0 and
                                  fiber_end < total_span_a - END_REGION_KM)
 
             if is_mid_span_break:
@@ -1192,14 +1703,20 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                         'dead_zone_km': _dead_zone,
                         'b_fill_reach_km': _b_fill_reach_km,
                     }
-                # B-fill for splices past the break
+                # B-fill for splices past the break.  Use the cable's
+                # total span as the mirror anchor — when B itself is
+                # broken short (b_span < total_span_a), the simple
+                # 'b_span − b_dist' mirror would map every B event to
+                # the wrong A-frame position and B-fill would silently
+                # miss everything.
                 elif sp_km > fiber_end and rb and b_span:
+                    mirror_anchor = total_span_a if total_span_a > 0 else b_span
                     b_evt = None
                     for e in rb['events']:
                         if e['dist_km'] < 1.0 or e['is_end']: continue
-                        ef_from_a = b_span - e['dist_km']
+                        ef_from_a = mirror_anchor - e['dist_km']
                         if abs(ef_from_a - sp_km) < POSITION_TOL:
-                            if b_evt is None or abs(ef_from_a - sp_km) < abs((b_span - b_evt['dist_km']) - sp_km):
+                            if b_evt is None or abs(ef_from_a - sp_km) < abs((mirror_anchor - b_evt['dist_km']) - sp_km):
                                 b_evt = e
                     if b_evt is not None:
                         b_loss_val = abs(b_evt['splice_loss'])
@@ -1210,7 +1727,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                                 'fiber': fnum, 'splice_idx': si,
                                 'bidir_loss': b_loss_val, 'a_loss': None,
                                 'b_loss': b_evt['splice_loss'],
-                                'bidir_dist': b_span - b_evt['dist_km'],
+                                'bidir_dist': mirror_anchor - b_evt['dist_km'],
                                 'is_break': False, 'is_broke': False, 'is_bend': False,
                                 'is_bfill': True, 'is_dead_zone': False,
                                 'is_a_only': False, 'is_b_only': False,
@@ -1239,10 +1756,24 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                         }
                 continue
 
-            # ── Find A event near this splice ──
+            # ── Find A event near this splice (neighbor-aware) ──
+            # When an adjacent closure sits closer than POSITION_TOL,
+            # tighten the matching window to half the gap so a single
+            # A event doesn't get claimed by both closures (double
+            # attribution).  Floor at 0.30 km so legitimate per-fiber
+            # length drift still resolves.  Wide-spaced spans keep the
+            # full POSITION_TOL.  Use index-based exclusion so a splice
+            # whose raw vs refined km differ slightly doesn't see its
+            # own refined position as a "neighbor."
+            nearest_other_km_a = min(
+                (abs(closure_kms_all[j] - sp_km)
+                 for j in range(len(closure_kms_all)) if j != si),
+                default=2 * POSITION_TOL)
+            local_tol_a = min(POSITION_TOL,
+                               max(0.30, nearest_other_km_a / 2.0))
             ea = None
             for e in r['events']:
-                if abs(e['dist_km'] - sp_km) < POSITION_TOL and e['dist_km'] > 1.0 and not e['is_end']:
+                if abs(e['dist_km'] - sp_km) < local_tol_a and e['dist_km'] > 1.0 and not e['is_end']:
                     if ea is None or abs(e['dist_km'] - sp_km) < abs(ea['dist_km'] - sp_km):
                         ea = e
 
@@ -1250,6 +1781,17 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 continue
 
             # ── Find matching B event ──
+            # Neighbor-aware matching (May 4 revision): when the
+            # nearest neighbor splice is closer than POSITION_TOL, use
+            # a tighter tolerance equal to half the gap to that neighbor.
+            # Index-based exclusion to skip THIS splice's own refined
+            # position (raw vs refined km can differ by ~50 m).
+            nearest_other_km = min(
+                (abs(closure_kms_all[j] - sp_km)
+                 for j in range(len(closure_kms_all)) if j != si),
+                default=2 * POSITION_TOL)
+            local_tol = min(POSITION_TOL, max(0.30, nearest_other_km / 2.0))
+
             eb = None
             b_loss = None
             b_from_a = None
@@ -1257,11 +1799,12 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 for e in rb['events']:
                     if e['dist_km'] < 1.0 or e['is_end']: continue
                     ef_from_a = b_span - e['dist_km']
-                    if abs(ef_from_a - ea['dist_km']) < POSITION_TOL:
-                        if eb is None or abs(ef_from_a - ea['dist_km']) < abs((b_span - eb['dist_km']) - ea['dist_km']):
-                            eb = e
-                            b_loss = e['splice_loss']
-                            b_from_a = ef_from_a
+                    if abs(ef_from_a - ea['dist_km']) >= local_tol:
+                        continue
+                    if eb is None or abs(ef_from_a - ea['dist_km']) < abs((b_span - eb['dist_km']) - ea['dist_km']):
+                        eb = e
+                        b_loss = e['splice_loss']
+                        b_from_a = ef_from_a
 
             # ── A event but no B event in table ──
             # Try to measure the B-direction loss directly from the B trace
@@ -1277,15 +1820,21 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 if b_grey is not None:
                     # Real bidirectional average using measured B grey
                     true_bidir = round((ea['splice_loss'] + b_grey) / 2.0, 4)
-                    closure_center_km = sp.get('position_km_refined', sp_km)
-                    is_bend_offset = _is_bend_event(ea['dist_km'], closure_center_km, true_bidir)
+                    closure_center_km = _closure_km_for_fiber(sp, fnum)
+                    bend_ref_km = (_per_fiber_splice_km(r['events'], closure_center_km)
+                                    or closure_center_km)
+                    is_bend_offset = _is_bend_event(ea['dist_km'], bend_ref_km, true_bidir,
+                                                    fiber_events=r['events'],
+                                                    a_loss=ea['splice_loss'], b_loss=b_grey,
+                                                    closure_kms=closure_kms_all,
+                                                    fiber_data=r)
                     is_bend = is_bend_offset or _is_phantom_column
 
                     if abs(true_bidir) >= threshold or is_bend:
                         loss_str = _format_loss(true_bidir)
                         if is_bend and not _is_phantom_column:
-                            offset_m = round((ea['dist_km'] - closure_center_km) * 1000, 0)
-                            label = f"{fnum} BEND {loss_str} ({offset_m:+.0f}m)"
+                            offset_m = round((ea['dist_km'] - bend_ref_km) * 1000, 0)
+                            label = f"{fnum} BEND {loss_str} bidi ({offset_m:+.0f}m)"
                         else:
                             label = f"{fnum} {loss_str}"
                         results[(fnum, si)] = {
@@ -1298,7 +1847,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                             'is_flagged': True,
                             'event_source': 'bend' if is_bend else 'bidir_grey_b',
                             'bend_severity': _bend_severity(true_bidir) if is_bend else None,
-                            'closure_offset_m': round((ea['dist_km'] - closure_center_km) * 1000, 1) if is_bend else None,
+                            'closure_offset_m': round((ea['dist_km'] - bend_ref_km) * 1000, 1) if is_bend else None,
                             'event_type': ea['type'],
                             'label': label,
                             '_b_is_grey': not is_bend,
@@ -1312,11 +1861,16 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 # flag as A-only if the single-direction loss alone clears threshold
                 if a_loss_abs >= threshold:
                     loss_str = _format_loss(a_loss_abs)
-                    closure_center_km = sp.get('position_km_refined', sp_km)
-                    is_bend_offset = _is_bend_event(ea['dist_km'], closure_center_km, ea['splice_loss'])
+                    closure_center_km = _closure_km_for_fiber(sp, fnum)
+                    bend_ref_km = (_per_fiber_splice_km(r['events'], closure_center_km)
+                                    or closure_center_km)
+                    is_bend_offset = _is_bend_event(ea['dist_km'], bend_ref_km, ea['splice_loss'],
+                                                    fiber_events=r['events'],
+                                                    closure_kms=closure_kms_all,
+                                                    fiber_data=r)
                     is_bend = is_bend_offset or _is_phantom_column
                     if is_bend and not _is_phantom_column:
-                        offset_m = round((ea['dist_km'] - closure_center_km) * 1000, 0)
+                        offset_m = round((ea['dist_km'] - bend_ref_km) * 1000, 0)
                         label = f"{fnum} BEND {loss_str}(A) ({offset_m:+.0f}m)"
                     elif is_bend:
                         label = f"{fnum} {loss_str}(A)"
@@ -1332,7 +1886,7 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                         'is_flagged': True,
                         'event_source': 'bend' if is_bend else 'a_only',
                         'bend_severity': _bend_severity(ea['splice_loss']) if is_bend else None,
-                        'closure_offset_m': round((ea['dist_km'] - closure_center_km) * 1000, 1) if is_bend else None,
+                        'closure_offset_m': round((ea['dist_km'] - bend_ref_km) * 1000, 1) if is_bend else None,
                         'event_type': ea['type'],
                         'label': label,
                     }
@@ -1343,21 +1897,38 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
             bidir_dist = round((ea['dist_km'] + b_from_a) / 2.0, 4)
 
             is_reflective = ea['type'].startswith('1F')
-            has_weak_fresnel = ea['reflection'] < -30.0
-            is_break = is_reflective and has_weak_fresnel and ea['dist_km'] < (total_span_a - END_REGION_KM)
+            has_weak_fresnel = ea['reflection'] < -25.0
+            mid_span = ea['dist_km'] < (total_span_a - END_REGION_KM)
+            # Reflective + Fresnel + mid-span is a *candidate* for either
+            # BREAK (trace terminates near this point) or REF (in-line
+            # reflective event — connector / mechanical splice / angled
+            # cleave with the trace continuing through).  Disambiguate by
+            # asking whether the fiber's trace has real events past this
+            # position and an EOF that's farther downstream.
+            is_refl_event_candidate = is_reflective and has_weak_fresnel and mid_span
+            trace_continues = _trace_continues_past(
+                r['events'], ea['dist_km'], total_span_a)
+            is_break = is_refl_event_candidate and not trace_continues
+            is_ref   = is_refl_event_candidate and trace_continues
 
             # ── BEND check (ZeroDBIFTHEN Flag-3 rule) ──
             # If the event position is offset from the true closure center
             # by more than CLOSURE_MATCH_KM (150 m), this is a BEND not a
             # splice reburn.  Use the refined (mode-based) center, falling
             # back to the coarse position_km if refinement hasn't run.
-            closure_center_km = sp.get('position_km_refined', sp_km)
-            is_bend_offset = _is_bend_event(ea['dist_km'], closure_center_km, bidir_loss)
-            # Phantom columns always classify as bends (unless they're breaks).
-            # The cell label stays clean — column header carries the zone type.
-            is_bend = (not is_break) and (is_bend_offset or _is_phantom_column)
+            closure_center_km = _closure_km_for_fiber(sp, fnum)
+            bend_ref_km = (_per_fiber_splice_km(r['events'], closure_center_km)
+                            or closure_center_km)
+            is_bend_offset = _is_bend_event(ea['dist_km'], bend_ref_km, bidir_loss,
+                                            fiber_events=r['events'],
+                                            a_loss=ea['splice_loss'], b_loss=b_loss,
+                                            closure_kms=closure_kms_all,
+                                            fiber_data=r)
+            # Phantom columns always classify as bends (unless they're breaks
+            # or in-line reflective events).
+            is_bend = (not is_break) and (not is_ref) and (is_bend_offset or _is_phantom_column)
 
-            is_flagged = (abs(bidir_loss) >= threshold) or is_break or is_bend
+            is_flagged = (abs(bidir_loss) >= threshold) or is_break or is_ref or is_bend
             if not is_flagged:
                 continue
 
@@ -1371,14 +1942,17 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 else:
                     break_type = ""
                 label = f"{fnum} BREAK {bidir_loss:.3f} ({abs(offset_m):.0f}m from splice){refl_str}{break_type}"
+            elif is_ref:
+                refl_db = ea['reflection']
+                label = f"{fnum} ref {_format_loss(bidir_loss)} (refl {refl_db:.0f}dB)"
             elif is_bend:
                 loss_str = _format_loss(bidir_loss)
                 if _is_phantom_column:
                     # Column already says 'bends@X km' — cell just shows fiber + loss
                     label = f"{fnum} {loss_str}"
                 else:
-                    offset_m = round((ea['dist_km'] - closure_center_km) * 1000, 0)
-                    label = f"{fnum} BEND {loss_str} ({offset_m:+.0f}m)"
+                    offset_m = round((ea['dist_km'] - bend_ref_km) * 1000, 0)
+                    label = f"{fnum} BEND {loss_str} bidi ({offset_m:+.0f}m)"
             else:
                 loss_str = _format_loss(bidir_loss)
                 label = f"{fnum} {loss_str}"
@@ -1389,11 +1963,14 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 'a_loss': ea['splice_loss'], 'b_loss': b_loss,
                 'bidir_dist': bidir_dist,
                 'is_break': is_break, 'is_broke': False, 'is_bend': is_bend,
+                'is_ref': is_ref,
                 'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
                 'is_flagged': True,
-                'event_source': 'bend' if is_bend else 'bidir',
+                'event_source': ('break' if is_break else
+                                 'ref' if is_ref else
+                                 'bend' if is_bend else 'bidir'),
                 'bend_severity': _bend_severity(bidir_loss) if is_bend else None,
-                'closure_offset_m': round((ea['dist_km'] - closure_center_km) * 1000, 1) if is_bend else None,
+                'closure_offset_m': round((ea['dist_km'] - bend_ref_km) * 1000, 1) if is_bend else None,
                 'event_type': ea['type'],
                 'label': label,
                 'fresnel': ea['reflection'] if is_reflective else None,
@@ -1419,6 +1996,8 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
     Does NOT overwrite any existing_results entries.
     """
     new_results = {}
+    closure_kms_all = [sp.get('position_km_refined', sp['position_km'])
+                       for sp in splices]
 
     for fnum, rb in fibers_b.items():
         ra = fibers_a.get(fnum)
@@ -1486,19 +2065,33 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                         if a_evt is None or abs(ae['dist_km'] - a_frame_km) < abs(a_evt['dist_km'] - a_frame_km):
                             a_evt = ae
 
-            closure_center_km = splices[nearest_si].get('position_km_refined',
-                                                         splices[nearest_si]['position_km'])
+            closure_center_km = _closure_km_for_fiber(splices[nearest_si], fnum)
+            # Per-fiber bend reference: use this fiber's own A-direction
+            # events (when available) to anchor the bend gate to the
+            # fiber's actual splice km rather than the global closure.
+            ra_events = ra['events'] if ra else None
+            bend_ref_km = closure_center_km
+            if ra_events is not None:
+                pf = _per_fiber_splice_km(ra_events, closure_center_km,
+                                           exclude_pos_km=a_frame_km)
+                if pf is not None:
+                    bend_ref_km = pf
 
             if a_evt is not None:
                 # A event exists — compute bidirectional
                 bidir = round((a_evt['splice_loss'] + b_loss_signed) / 2.0, 4)
-                is_bend = _is_bend_event(a_frame_km, closure_center_km, bidir)
+                is_bend = _is_bend_event(a_frame_km, bend_ref_km, bidir,
+                                         fiber_events=ra_events,
+                                         a_loss=a_evt['splice_loss'],
+                                         b_loss=b_loss_signed,
+                                         closure_kms=closure_kms_all,
+                                         fiber_data=ra)
                 if abs(bidir) < threshold and not is_bend:
                     continue
                 loss_str = _format_loss(bidir)
                 if is_bend:
-                    offset_m = round((a_frame_km - closure_center_km) * 1000, 0)
-                    label = f"{fnum} BEND {loss_str} ({offset_m:+.0f}m)"
+                    offset_m = round((a_frame_km - bend_ref_km) * 1000, 0)
+                    label = f"{fnum} BEND {loss_str} bidi ({offset_m:+.0f}m)"
                 else:
                     label = f"{fnum} {loss_str}"
                 new_results[(fnum, nearest_si)] = {
@@ -1511,7 +2104,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     'is_flagged': True,
                     'event_source': 'bend' if is_bend else 'bidir',
                     'bend_severity': _bend_severity(bidir) if is_bend else None,
-                    'closure_offset_m': round((a_frame_km - closure_center_km) * 1000, 1) if is_bend else None,
+                    'closure_offset_m': round((a_frame_km - bend_ref_km) * 1000, 1) if is_bend else None,
                     'event_type': a_evt['type'],
                     'label': label,
                 }
@@ -1522,13 +2115,17 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
                 if a_grey is not None:
                     true_bidir = round((a_grey + b_loss_signed) / 2.0, 4)
-                    is_bend = _is_bend_event(a_frame_km, closure_center_km, true_bidir)
+                    is_bend = _is_bend_event(a_frame_km, bend_ref_km, true_bidir,
+                                              fiber_events=ra_events,
+                                              a_loss=a_grey, b_loss=b_loss_signed,
+                                              closure_kms=closure_kms_all,
+                                              fiber_data=ra)
                     if abs(true_bidir) < threshold and not is_bend:
                         continue
                     loss_str = _format_loss(true_bidir)
                     if is_bend:
-                        offset_m = round((a_frame_km - closure_center_km) * 1000, 0)
-                        label = f"{fnum} BEND {loss_str} ({offset_m:+.0f}m)"
+                        offset_m = round((a_frame_km - bend_ref_km) * 1000, 0)
+                        label = f"{fnum} BEND {loss_str} bidi ({offset_m:+.0f}m)"
                     else:
                         label = f"{fnum} {loss_str}"
                     new_results[(fnum, nearest_si)] = {
@@ -1541,7 +2138,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                         'is_flagged': True,
                         'event_source': 'bend' if is_bend else 'bidir_grey_a',
                         'bend_severity': _bend_severity(true_bidir) if is_bend else None,
-                        'closure_offset_m': round((a_frame_km - closure_center_km) * 1000, 1) if is_bend else None,
+                        'closure_offset_m': round((a_frame_km - bend_ref_km) * 1000, 1) if is_bend else None,
                         'event_type': e['type'],
                         'label': label,
                         '_a_is_grey': not is_bend,
@@ -1551,10 +2148,13 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                 # No JSON trace — fall back to single-direction check (B alone
                 # ≥ threshold, which is conservative but honest)
                 if b_loss_abs >= threshold:
-                    is_bend = _is_bend_event(a_frame_km, closure_center_km, b_loss_signed)
+                    is_bend = _is_bend_event(a_frame_km, bend_ref_km, b_loss_signed,
+                                              fiber_events=ra_events,
+                                              closure_kms=closure_kms_all,
+                                              fiber_data=ra)
                     loss_str = _format_loss(b_loss_abs)
                     if is_bend:
-                        offset_m = round((a_frame_km - closure_center_km) * 1000, 0)
+                        offset_m = round((a_frame_km - bend_ref_km) * 1000, 0)
                         label = f"{fnum} BEND {loss_str}(B) ({offset_m:+.0f}m)"
                     else:
                         label = f"{fnum} {loss_str} (B)"
@@ -1569,7 +2169,7 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                         'is_flagged': True,
                         'event_source': 'bend' if is_bend else 'b_only',
                         'bend_severity': _bend_severity(b_loss_signed) if is_bend else None,
-                        'closure_offset_m': round((a_frame_km - closure_center_km) * 1000, 1) if is_bend else None,
+                        'closure_offset_m': round((a_frame_km - bend_ref_km) * 1000, 1) if is_bend else None,
                         'event_type': e['type'],
                         'label': label,
                     }
@@ -1584,13 +2184,14 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
 def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                              bend_threshold=None, closure_match_km=None,
-                             nearest_tol_km=2.0):
+                             nearest_tol_km=2.0,
+                             fibers_b=None):
     """Every A-direction non-end event that was NOT covered by Pass 1 gets
     classified as a BEND or a BREAK/BROKE.  This replaces the old behaviour
     where events inside a phantom splice column would render as splice
     reburns even though they were actually bends.
 
-    Rule (from the tech's April 23 instructions):
+    Rule (from the tech's instructions):
       • We build the template off A direction events.
       • Any A events NOT at a splice column → bend or break.
 
@@ -1603,7 +2204,11 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
     new_results = {}
     seen_keys = set(existing_results.keys())
 
-    # Pre-compute the refined center of every closure for fast nearest lookup
+    # Pre-compute the refined center of every closure for fast nearest lookup.
+    # We use the global refined position here for the nearest-splice search
+    # (since we don't yet know which fiber we're matching).  Once a nearest
+    # splice is picked, the bend-vs-splice geometry test uses the
+    # per-ribbon refined position via _closure_km_for_fiber().
     closure_centers = [(si, sp.get('position_km_refined', sp['position_km']))
                        for si, sp in enumerate(splices)]
 
@@ -1621,8 +2226,14 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                 continue
             if e['dist_km'] < 1.0:
                 continue  # launch region — handled separately
+            if eof_a is not None and e['dist_km'] >= eof_a:
+                continue  # post-EOL event detector noise (instrument tail)
             loss = e.get('splice_loss') or 0.0
-            if abs(loss) < bt:
+            # Bends are real attenuation → require POSITIVE signed loss
+            # ≥ threshold.  Negative-signed events are gainer signatures
+            # or LSA artifacts and are handled by the gainer pass / not
+            # at all (respectively).
+            if loss < bt:
                 continue
 
             # Find nearest closure (by refined center)
@@ -1633,9 +2244,22 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                     best_d = d
                     best_si = si
 
-            # If this event IS within CLOSURE_MATCH_KM of a real closure,
-            # analyze_all (Pass 1) already handled it — skip.
-            if best_d <= cm:
+            # PER-FIBER bend gate: the candidate event is a "splice event"
+            # for this specific fiber if it lies within CLOSURE_MATCH_KM of
+            # this fiber's own nearest event to the closure (i.e. it IS the
+            # fiber's primary splice event, even if that splice is offset by
+            # >150 m from the global closure center due to length variation).
+            # If so, Pass 1 has already classified it — skip.
+            best_sp = splices[best_si] if best_si is not None else None
+            best_closure_km = closure_centers[best_si][1] if best_si is not None else None
+            # Exclude the candidate event itself from the per-fiber search
+            # so the reference km is the fiber's PRIMARY splice event (the
+            # one Pass 1 already classified), not this candidate.
+            per_fiber_km = (_per_fiber_splice_km(events, best_closure_km,
+                                                  exclude_pos_km=e['dist_km'])
+                             if best_closure_km is not None else None)
+            bend_ref_km = per_fiber_km if per_fiber_km is not None else best_closure_km
+            if bend_ref_km is not None and abs(e['dist_km'] - bend_ref_km) <= cm:
                 continue
             # If very far from every closure, still bucket to the nearest
             # one for display purposes (within nearest_tol_km).  Farther than
@@ -1649,10 +2273,29 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
 
             is_reflective = e.get('is_reflective') or str(e.get('type','')).startswith('1F')
             refl = e.get('reflection') or 0.0
-            has_weak_fresnel = refl < -30.0
+            has_weak_fresnel = refl < -25.0
 
-            # BREAK: reflective, has weak Fresnel, mid-span
+            # Reflective + weak Fresnel + mid-span — disambiguate BREAK
+            # vs in-line REF (trace continues past the event).
             if is_reflective and has_weak_fresnel and e['dist_km'] < (total_span_a - END_REGION_KM):
+                trace_continues = _trace_continues_past(events, e['dist_km'], total_span_a)
+                if trace_continues:
+                    # In-line reflective event — connector / mech splice / etc.
+                    label = f"{fnum} ref {_format_loss(loss)} (refl {refl:.0f}dB)"
+                    new_results[key] = {
+                        'fiber': fnum, 'splice_idx': best_si,
+                        'bidir_loss': loss, 'a_loss': loss, 'b_loss': None,
+                        'bidir_dist': e['dist_km'],
+                        'is_break': False, 'is_broke': False, 'is_bend': False,
+                        'is_ref': True,
+                        'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                        'is_flagged': True, 'event_source': 'ref_standalone',
+                        'event_type': e['type'],
+                        'label': label,
+                        'fresnel': refl,
+                    }
+                    continue
+                # Real BREAK — fiber doesn't carry on past this point
                 loss_str = _format_loss(loss)
                 refl_str = f" {abs(loss):.3f} uni reflection {refl:.0f}"
                 break_type = " air gap" if refl > -35.0 else ""
@@ -1663,6 +2306,7 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                     'bidir_loss': loss, 'a_loss': loss, 'b_loss': None,
                     'bidir_dist': e['dist_km'],
                     'is_break': True, 'is_broke': False, 'is_bend': False,
+                    'is_ref': False,
                     'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
                     'is_flagged': True, 'event_source': 'break_standalone',
                     'event_type': e['type'],
@@ -1671,28 +2315,114 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                 }
                 continue
 
+            # BEND verification: cross-check against the B-direction data.
+            # Per tech direction, the BIDIRECTIONAL AVERAGE (A_loss + B_loss)/2
+            # must reach 0.090 dB for an event to qualify as a bend — that
+            # way an A-only artifact gets averaged down to roughly half the
+            # threshold and stops triggering false bends.  The B value can
+            # come from a discrete B event in the table OR from a wide-LSA
+            # grey reading on the B raw trace at the mirrored A-frame
+            # position.
+            b_value = None
+            b_source = None
+            b_event = None
+            if fibers_b is not None and total_span_a > 0:
+                rb = fibers_b.get(fnum)
+                if rb is not None:
+                    b_end_b = [be for be in rb.get('events', []) if be.get('is_end')]
+                    if b_end_b:
+                        # Discrete B event search (mirror via total_span_a)
+                        for be in rb.get('events', []):
+                            if be.get('is_end') or be['dist_km'] < 1.0:
+                                continue
+                            b_a_frame = total_span_a - be['dist_km']
+                            d = abs(b_a_frame - e['dist_km'])
+                            if d < 0.300:  # ±300 m bend matching tolerance
+                                if b_event is None or d < abs((total_span_a - b_event['dist_km']) - e['dist_km']):
+                                    b_event = be
+                        if b_event is not None:
+                            b_value = b_event.get('splice_loss')
+                            b_source = 'event'
+                        else:
+                            # Fall back to wide-LSA grey on the B trace
+                            try:
+                                b_frame_km = total_span_a - e['dist_km']
+                                grey = _grey_loss(rb, b_frame_km)
+                            except Exception:
+                                grey = None
+                            if grey is not None:
+                                b_value = grey
+                                b_source = 'grey_lsa'
+
+            # Bidir-average bend rule: drop the bend unless (A + B) / 2
+            # reaches BEND_THRESHOLD (0.090 dB by default).  When no B
+            # value can be obtained at all, skip — we don't trust an
+            # A-only loss on its own for bend classification.
+            if b_value is None:
+                continue
+            bidir_avg = (loss + b_value) / 2.0
+            if bidir_avg < bt:
+                continue  # bidir must be POSITIVE ≥ threshold for a bend
+
+            # ── Per-fiber length model + narrow-LSA gate (April 28) ──
+            # Test 1: predict where this fiber's splice should sit at this
+            # closure using a leave-one-out linear fit through the fiber's
+            # (cable_km, event_km) pairs at every other closure.  If the
+            # candidate event sits within BEND_RES_SPLICE_M of the
+            # prediction, it IS this fiber's splice (just offset from the
+            # ribbon median by accumulated fiber-length variation) — drop.
+            # If between SPLICE and BEND thresholds, treat as ambiguous
+            # and drop conservatively.
+            # Test 2: when residual is large enough to call BEND, confirm
+            # by reading a narrow-LSA on the raw A trace at predicted_km.
+            # A real bend means a separate splice exists at predicted_km
+            # (loss step ≥ BEND_NARROW_LOSS_DB) AND the candidate event
+            # exists at this position.  No splice signature → drop.
+            closure_kms_local = [c for _, c in closure_centers]
+            residual_m, predicted_km, _n_fit = _perfiber_residual_m(
+                ra, closure_kms_local, e['dist_km'])
+            if residual_m is not None:
+                ares = abs(residual_m)
+                if ares <= BEND_RES_SPLICE_M:
+                    continue          # SPLICE — fits the fiber's pattern
+                if ares < BEND_RES_BEND_M:
+                    continue          # ambiguous — conservative drop
+                # Confirm via wide-LSA at predicted_km — both JSON and
+                # SOR sources supported (dispatch in _narrow_lsa_loss).
+                # Conservative: require positive evidence.  Drop the
+                # candidate when the LSA can't fit (None) or returns a
+                # sub-threshold magnitude.
+                if ra is not None:
+                    pred_loss = _narrow_lsa_loss(ra, predicted_km)
+                    if pred_loss is None or abs(pred_loss) < BEND_NARROW_LOSS_DB:
+                        continue      # no corroborating splice — drop
+
             # BEND: everything else above threshold.  If the nearest column
             # is itself a phantom bend/damage zone, the column header already
             # describes the zone — keep the cell label clean.
+            # Label shows the bidirectional-average loss (the value the gate
+            # used) with a 'bidi' tag to make clear it's not the raw A reading.
+            bidir = round((loss + b_value) / 2.0, 4)
             target_sp = splices[best_si]
             target_is_phantom = target_sp.get('column_kind') in ('bend', 'damage')
-            loss_str = _format_loss(loss)
+            loss_str = _format_loss(bidir)
             if target_is_phantom:
-                label = f"{fnum} {loss_str}"
+                label = f"{fnum} {loss_str} bidi"
             else:
-                offset_m = round((e['dist_km'] - closure_centers[best_si][1]) * 1000, 0)
-                label = f"{fnum} BEND {loss_str} ({offset_m:+.0f}m)"
+                offset_m = round((e['dist_km'] - bend_ref_km) * 1000, 0)
+                label = f"{fnum} BEND {loss_str} bidi ({offset_m:+.0f}m)"
             new_results[key] = {
                 'fiber': fnum, 'splice_idx': best_si,
-                'bidir_loss': loss, 'a_loss': loss, 'b_loss': None,
+                'bidir_loss': bidir, 'a_loss': loss, 'b_loss': b_value,
                 'bidir_dist': e['dist_km'],
                 'is_break': False, 'is_broke': False, 'is_bend': True,
                 'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
                 'is_flagged': True, 'event_source': 'bend_standalone',
-                'bend_severity': _bend_severity(loss),
-                'closure_offset_m': float(offset_m),
+                'bend_severity': _bend_severity(bidir),
+                'closure_offset_m': float(offset_m) if not target_is_phantom else 0.0,
                 'event_type': e['type'],
                 'label': label,
+                '_b_source': b_source,
             }
     return new_results
 
@@ -1735,6 +2465,15 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
         if not b_end_events:
             continue
         b_span = b_end_events[0]['dist_km']
+        # Use the CABLE's total span (not B's measured span) when
+        # mirroring B-frame distances to A-frame.  When B itself is
+        # broken short, b_span < total_span_a and the simple
+        # b_span − b_dist formula gives wildly wrong A-frame
+        # positions for every B event — so B-fill misses the very
+        # cases it's meant to handle.  Anchoring on total_span_a
+        # restores correct mirroring even when both directions are
+        # broken.
+        mirror_anchor = total_span_a if total_span_a > 0 else b_span
 
         # Scan B events whose A-frame position is GREATER than brk_km
         for e in rb['events']:
@@ -1742,7 +2481,7 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
                 continue
             if e['dist_km'] < 1.0:
                 continue
-            a_frame = b_span - e['dist_km']
+            a_frame = mirror_anchor - e['dist_km']
             if a_frame <= brk_km + 0.2:   # 200m buffer past the break
                 continue
             b_loss = e.get('splice_loss') or 0.0
@@ -1827,6 +2566,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                     'is_break': res['is_break'],
                     'is_broke': res['is_broke'],
                     'is_bend':  res.get('is_bend', False),
+                    'is_ref':   res.get('is_ref', False),
                     'is_bfill': res.get('is_bfill', False),
                     'is_dead_zone': res.get('is_dead_zone', False),
                     'is_gainer': res.get('is_gainer', False),
@@ -1848,6 +2588,8 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                 # Use the enriched broke label (includes position + DZ range)
                 parts.append(g['label'])
             elif g['is_break']:
+                parts.append(g['label'])
+            elif g.get('is_ref'):
                 parts.append(g['label'])
             elif g.get('is_bend'):
                 # Use the full label (includes "BEND" marker and offset)
@@ -1896,6 +2638,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
         cell_text = ' '.join(parts)
         is_break = any(g['is_break'] for g in groups)
         is_broke = any(g['is_broke'] for g in groups)
+        is_ref   = any(g.get('is_ref', False) for g in groups)
         is_bend  = any(g.get('is_bend', False) for g in groups)
         is_bfill = any(g.get('is_bfill', False) for g in groups)
 
@@ -1926,6 +2669,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
             'text': cell_text,
             'is_break': is_break,
             'is_broke': is_broke,
+            'is_ref':   is_ref,
             'is_bend':  is_bend,
             'is_bfill': is_bfill,
             'is_dead_zone': is_dead_zone,
@@ -2006,11 +2750,17 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     red_fill    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")   # A+B reburn
     break_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # break
     break_font  = Font(bold=True, size=8, color="FFFFFF")
-    # April 23 revision: BROKE is now rendered the same as BREAK — both are
+    # BROKE is now rendered the same as BREAK — both are
     # physical damage where the fiber has lost transmission.  Same red fill,
     # same white bold text, same category in the tech's eye.
     broke_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # red
     broke_font  = Font(bold=True, size=8, color="FFFFFF")
+    # In-line REFLECTIVE event (connector / mech splice / angled cleave)
+    # — reflective + Fresnel but the trace clearly continues past it.
+    # Distinct from BREAK red so the eye separates "fiber's still alive
+    # and reflecting" from "fiber's gone".
+    ref_fill    = PatternFill(start_color="E64A19", end_color="E64A19", fill_type="solid")   # deep orange-red
+    ref_font    = Font(bold=True, size=8, color="FFFFFF")
     bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")   # B-fill past break
     bfill_font  = Font(size=8, color="1F4E79")
     dz_fill     = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")   # dead zone (gray)
@@ -2060,9 +2810,16 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     ws.cell(row=2, column=2, value="B→A:").font = b_km_font
     for si, sp in enumerate(splices):
         col = si + 3
-        km = sp['position_km']
+        # Steven's convention: the A→B header is the lowest-numbered fiber's
+        # event distance, truncated to 10 m.  Falls back to the refined
+        # cluster center, then the raw position, if no display value was set
+        # (e.g. for phantom bend / damage columns).
+        km = sp.get('position_km_display',
+                    sp.get('position_km_refined', sp['position_km']))
         ft = km * 3280.84
-        b_km = span_km - km
+        # B→A is the cable span minus the A-side display value, also
+        # truncated to 10 m so the two headers stay self-consistent.
+        b_km = math.floor((span_km - km) * 100) / 100.0
         b_ft = b_km * 3280.84
         c1 = ws.cell(row=1, column=col, value=f"{km:.2f}km / {ft:,.0f}ft")
         c1.font = a_km_font
@@ -2153,6 +2910,9 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                 elif cd['is_broke']:
                     cell.fill = broke_fill
                     cell.font = broke_font
+                elif cd.get('is_ref'):
+                    cell.fill = ref_fill
+                    cell.font = ref_font
                 elif cd.get('is_bend'):
                     cell.fill = bend_fill
                     cell.font = bend_font
@@ -2191,6 +2951,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Pink",       "FFC7CE", "000000", "A+B — Bidirectional reburn: both directions confirmed, bidir loss >= threshold. Needs re-splice."),
         ("Red",        "FF4444", "FFFFFF", "Break — 1F reflective event (clean cut, glass-to-air Fresnel reflection). label: 'BREAK'"),
         ("Red (broke)","FF4444", "FFFFFF", "Broke — fiber trace terminates mid-span (crush / stress fracture).  Rendered with the same red fill as a break; label reads 'broke' or 'BREAK' depending on reflective vs non-reflective signature."),
+        ("Deep Orange","E64A19", "FFFFFF", "REF — in-line reflective event (connector / mechanical splice / angled cleave).  Reflective + Fresnel but trace continues past it. label: 'F# ref .xxx (refl -XX dB)'"),
         ("Blue",       "BDD7EE", "1F4E79", "B-fill — B-direction loss used past a break where A-direction is blind. label: '(B-fill)'"),
         ("Gray",       "BFBFBF", "3F3F3F", "Dead zone — fiber broke on A side AND B trace also ends before reaching the A-break. Neither trace could see this splice for this fiber. Broke cell shows 'F# broke@XXk | DZ lo-hi k'; affected columns show 'F# DZ'."),
         ("Lt. Yellow", "FFF2CC", "7F6000", "A-only, est bidir OK — A saw it, no B entry. Estimated bidir (A/2) is below threshold. label: 'F# .xxx(A) ~.xxxbd'"),
@@ -2409,7 +3170,7 @@ def main():
     #             an A-side break)
     print(f"\nPass 2a: Scanning A-direction standalone events (bends / breaks)...")
     a_standalone = scan_a_standalone_events(
-        fibers_a, splices, results, span_km,
+        fibers_a, splices, results, span_km, fibers_b=fibers_b,
     )
     n_p2a_bend  = sum(1 for r in a_standalone.values() if r.get('is_bend'))
     n_p2a_break = sum(1 for r in a_standalone.values() if r.get('is_break'))
@@ -2440,6 +3201,7 @@ def main():
     n_b_only  = sum(1 for r in all_results.values() if r.get('is_b_only'))
     n_breaks  = sum(1 for r in all_results.values() if r['is_break'])
     n_broke   = sum(1 for r in all_results.values() if r['is_broke'])
+    n_ref     = sum(1 for r in all_results.values() if r.get('is_ref'))
     n_bfill   = sum(1 for r in all_results.values() if r.get('is_bfill'))
     n_dz      = sum(1 for r in all_results.values() if r.get('is_dead_zone'))
     n_dz_fibers = len({r['fiber'] for r in all_results.values()
@@ -2474,11 +3236,13 @@ def main():
     print(f"  Fibers:       {n_fibers}")
     print(f"  Splices:      {len(splices)}")
     print(f"  Span:         {span_km} km")
-    print(f"  Threshold:    {args.threshold:.3f} dB   (bend threshold {BEND_THRESHOLD:.3f} dB, offset > {CLOSURE_MATCH_KM*1000:.0f} m)")
+    print(f"  Threshold:    {args.threshold:.3f} dB   (bend threshold {BEND_THRESHOLD:.3f} dB, "
+          f"offset > {CLOSURE_MATCH_KM*1000:.0f} m)")
     print(f"  ──────────────────────────────────")
     print(f"  A+B reburns:  {n_reburn}  (pink)   — both directions, bidir >= threshold, near closure center")
-    print(f"  Breaks:       {n_breaks}  (red)    — 1F reflective event")
+    print(f"  Breaks:       {n_breaks}  (red)    — 1F reflective event, trace ends near here")
     print(f"  Broke:        {n_broke}  (red)    — trace terminates mid-span (same red fill as break)")
+    print(f"  Ref events:   {n_ref}  (deep orange) — in-line reflective event, trace continues past it")
     print(f"  B-fill:       {n_bfill}  (blue)   — B-direction past a break")
     print(f"  Dead zone:    {n_dz}  (gray)   — neither trace could see; {n_dz_fibers} broken fibers have a dead zone")
     print(f"  A-only:       {n_a_only}  (yellow) — A saw it, B did not")
