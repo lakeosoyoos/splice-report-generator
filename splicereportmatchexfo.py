@@ -1445,17 +1445,23 @@ def _bend_severity(loss):
 
 def split_offsplice_events_into_own_columns(all_results, splices,
                                               splice_dist_km=None,
-                                              cluster_gap_km=0.200):
-    """Reassign bend/break events that sit far from any splice into
-    their own phantom columns.
+                                              cluster_gap_km=0.200,
+                                              broke_cluster_gap_km=0.400):
+    """Reassign bend / break / broke events that sit far from any
+    splice into their own phantom columns.
 
-    Bend/break events that are within ``splice_dist_km`` (default
-    CLOSURE_MATCH_KM = 150 m) of a real splice stay attributed to that
-    splice column — they're "at the splice."  Events that sit farther
-    away are clustered by km position (``cluster_gap_km``, default
-    200 m apart) and each cluster becomes a NEW pseudo-splice entry
-    with ``column_kind = 'bend'`` (or 'damage' for breaks), inserted
-    into the splices list at the right physical position.
+    Bend / break / broke events that are within ``splice_dist_km``
+    (default CLOSURE_MATCH_KM = 150 m) of a real splice stay attributed
+    to that splice column — they're "at the splice."  Events farther
+    away get clustered by km position (``cluster_gap_km`` for
+    bend/break, ``broke_cluster_gap_km`` for broke — slightly wider
+    because broke positions vary by per-fiber detection threshold)
+    and each cluster becomes a NEW pseudo-splice entry inserted into
+    the splices list at the right physical position.
+
+    Column kind by cluster contents:
+      • Pure bends → ``column_kind = 'bend'`` (yellow header)
+      • Any break / broke → ``column_kind = 'damage'`` (red header)
 
     Returns (updated_all_results, updated_splices).  Existing splice
     indices in ``all_results`` are remapped to the new sort order.
@@ -1468,12 +1474,13 @@ def split_offsplice_events_into_own_columns(all_results, splices,
     splice_kms = [sp.get('position_km_refined', sp['position_km'])
                   for sp in splices]
 
-    # 1. Find bend/break events that sit > splice_dist_km from any splice.
+    # 1. Find bend / break / broke events that sit > splice_dist_km
+    #    from any splice.
     candidates = []
     for key, r in all_results.items():
         if not isinstance(r, dict):
             continue
-        if not (r.get('is_bend') or r.get('is_break')):
+        if not (r.get('is_bend') or r.get('is_break') or r.get('is_broke')):
             continue
         km = r.get('bidir_dist')
         if km is None:
@@ -1485,30 +1492,43 @@ def split_offsplice_events_into_own_columns(all_results, splices,
     if not candidates:
         return all_results, splices
 
-    # 2. Cluster candidates by km position.  Events within cluster_gap_km
-    #    of each other share a column.
+    # 2. Cluster candidates by km position.  Bend/break clusters use
+    #    the tighter cluster_gap_km; broke clusters use the wider
+    #    broke_cluster_gap_km because broke positions on adjacent
+    #    fibers can drift by a few hundred metres depending on where
+    #    each fiber's A trace terminates.  When a cluster mixes
+    #    bend/break and broke, the wider gap is used.
     candidates.sort(key=lambda x: x[2])
     clusters = []          # list of dict {km_center, items: [(key, r)]}
     for key, r, km in candidates:
-        if clusters and abs(km - clusters[-1]['km_center']) < cluster_gap_km:
-            # Update running mean
-            cluster = clusters[-1]
-            new_count = len(cluster['items']) + 1
-            cluster['km_center'] = (
-                cluster['km_center'] * len(cluster['items']) + km
-            ) / new_count
-            cluster['items'].append((key, r))
-        else:
-            clusters.append({'km_center': km, 'items': [(key, r)]})
+        gap = broke_cluster_gap_km if r.get('is_broke') else cluster_gap_km
+        if clusters:
+            # Use the wider gap if this candidate OR the prior cluster
+            # contains a broke event.
+            prior_has_broke = any(rr.get('is_broke') for _, rr in clusters[-1]['items'])
+            effective_gap = broke_cluster_gap_km if (r.get('is_broke') or prior_has_broke) else cluster_gap_km
+            if abs(km - clusters[-1]['km_center']) < effective_gap:
+                cluster = clusters[-1]
+                new_count = len(cluster['items']) + 1
+                cluster['km_center'] = (
+                    cluster['km_center'] * len(cluster['items']) + km
+                ) / new_count
+                cluster['items'].append((key, r))
+                continue
+        clusters.append({'km_center': km, 'items': [(key, r)]})
 
-    # 3. Build new pseudo-splice entries.  A cluster of breaks gets
-    #    column_kind='damage'; otherwise 'bend'.
+    # 3. Build new pseudo-splice entries.  A cluster containing any
+    #    break or broke event gets column_kind='damage' (red header);
+    #    otherwise 'bend' (yellow).
     new_phantoms = []
     for cluster in clusters:
         kinds = set()
         for _, r in cluster['items']:
-            kinds.add('break' if r.get('is_break') else 'bend')
-        column_kind = 'damage' if 'break' in kinds else 'bend'
+            if r.get('is_break') or r.get('is_broke'):
+                kinds.add('damage')
+            else:
+                kinds.add('bend')
+        column_kind = 'damage' if 'damage' in kinds else 'bend'
         phantom = {
             'position_km': round(cluster['km_center'], 2),
             'position_km_refined': cluster['km_center'],
@@ -1563,11 +1583,13 @@ def split_offsplice_events_into_own_columns(all_results, splices,
         if ' (' in old_label and 'm)' in old_label:
             r['label'] = old_label.rsplit(' (', 1)[0]
         r['closure_offset_m'] = 0.0
-        # Reset event_source to indicate the dedicated bend column.
+        # Reset event_source to indicate the dedicated bend / damage column.
         if r.get('is_bend'):
             r['event_source'] = 'bend_column'
         elif r.get('is_break'):
             r['event_source'] = 'break_column'
+        elif r.get('is_broke'):
+            r['event_source'] = 'broke_column'
         all_results[(r['fiber'], new_si)] = r
 
     return all_results, combined
@@ -3323,22 +3345,20 @@ def main():
     print(f"  Field gainers: {n_field_gainers} (loss in "
           f"[{FIELD_GAINER_MIN_DB}, {FIELD_GAINER_MAX_DB}] dB, mid-span)")
 
-    # Off-splice bend / break columns: any bend or break event sitting
+    # Off-splice bend / break / broke columns: any such event sitting
     # more than CLOSURE_MATCH_KM (150 m) from a real splice gets pulled
     # out of the nearest splice's column and placed in its own bend
     # (yellow) or damage (red) column at the event's actual km
-    # position.  Events clustered within 200 m share a column.
-    pre_n_splices = len(splices)
+    # position.  Events clustered within 200 m (bends/breaks) or 400 m
+    # (broke fibers) share a column.
+    pre_splice_ids = {id(sp) for sp in splices}
     all_results, splices = split_offsplice_events_into_own_columns(
         all_results, splices)
-    n_new_phantom_cols = len(splices) - pre_n_splices
-    if n_new_phantom_cols:
-        new_cols = [sp for sp in splices
-                    if sp.get('column_kind') in ('bend', 'damage')
-                    and not sp.get('is_real_closure', True)]
-        print(f"  Pulled off-splice bend/break events into "
-              f"{n_new_phantom_cols} new column(s):")
-        for sp in new_cols[-n_new_phantom_cols:]:
+    newly_added = [sp for sp in splices if id(sp) not in pre_splice_ids]
+    if newly_added:
+        print(f"  Pulled off-splice events into {len(newly_added)} "
+              f"new column(s):")
+        for sp in newly_added:
             km = sp.get('position_km_refined', sp['position_km'])
             print(f"    [{sp['column_kind']:<6}] @ {km:.2f} km  "
                   f"({sp.get('count', 0)} events)")
