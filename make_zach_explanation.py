@@ -250,7 +250,9 @@ def _explain_launch(info):
     pieces.append(
         "Triggered by one or more of: missing event table, fiber ends "
         "within 2 km of launch, launch-connector loss exceeds 1 dB, or "
-        "launch-connector reflectance worse than −15 dB.")
+        "launch-connector reflectance at or above −49.9 dB (healthy "
+        "buried launch reflects −50 to −55 dB; values closer to zero "
+        "indicate damaged / dirty / partially-cut connector).")
     return ' '.join(pieces)
 
 
@@ -598,8 +600,9 @@ def build_explanation_pdf(all_results, splices, launch_issues, span_km,
         "Rule: <b>NO_EVENTS</b>, <b>IMMEDIATE_END</b> (fiber ends "
         "within 2 km of launch), <b>HIGH_LAUNCH_LOSS</b> (launch "
         "connector loss > 1 dB), <b>BAD_LAUNCH_REFL</b> (launch "
-        "reflectance worse than −15 dB).  Renders in the dedicated "
-        "ILA:A / ILA:B columns of the xlsx.",
+        "reflectance at or above −49.9 dB — healthy buried launch is "
+        "−50 to −55 dB).  Renders in the dedicated ILA:A / ILA:B "
+        "columns of the xlsx.",
         st['body']))
     if launch_issues:
         rows = []
