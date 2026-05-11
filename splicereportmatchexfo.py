@@ -241,18 +241,18 @@ LAUNCH_HIGH_LOSS_DB          = None   # launch-event LOSS rule disabled per tech
                                       #   direction — the gate is on reflectance,
                                       #   not loss.
 LAUNCH_BAD_REFL_DB           = -49.9  # launch reflectance threshold (signed,
-                                      #   strict greater-than).  Rule:
-                                      #     refl <= -49.9 dB → good (no flag)
-                                      #     refl >  -49.9 dB → bad  (flag)
-                                      #   Healthy buried launch is -50 to -55 dB
-                                      #   and passes cleanly.  Borderline values
-                                      #   that round to "-50.0" on display (e.g.
-                                      #   actual -49.97) were previously
-                                      #   flagged; -49.9 boundary lets those
-                                      #   through.  Damaged / dirty connectors
-                                      #   read -10 to -30 dB (flag).  -50.0 is
-                                      #   good, -49.9 is on the boundary (good),
-                                      #   -49.8 is bad, -54.8 is good.
+                                      #   inclusive greater-than-or-equal).  Rule:
+                                      #     refl <  -49.9 dB → good (no flag)
+                                      #     refl >= -49.9 dB → bad  (flag)
+                                      #   Healthy buried launch is -50 to -55 dB.
+                                      #   Floats that display as "-50.0" but are
+                                      #   actually -49.95 / -49.97 round in
+                                      #   their favor and pass.  Anything that
+                                      #   actually reaches -49.9 (or any value
+                                      #   "larger" / closer to zero) is flagged
+                                      #   as a damaged / dirty connector.
+                                      #   -54.8 good, -50.0 good, -49.95 good,
+                                      #   -49.9 BAD, -49.8 BAD, -10 BAD.
 # ── FIELD-EVENT GAINER GATE ─────────────────────────────────────────────────
 # Mid-span events whose signed loss falls in the [-0.7, 0] dB range get
 # flagged as suspicious gainers — these are weak-gainer / near-zero events
@@ -1693,7 +1693,7 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                     if launch_loss_signed > hi_loss:
                         tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
-                if refl > bad_refl:
+                if refl >= bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
 
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
