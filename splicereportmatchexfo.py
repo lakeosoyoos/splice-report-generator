@@ -240,14 +240,19 @@ CLOSURE_VALID_MEDIAN_LOSS_MAX = 0.100   # dB — median loss inside the tight
 LAUNCH_HIGH_LOSS_DB          = None   # launch-event LOSS rule disabled per tech
                                       #   direction — the gate is on reflectance,
                                       #   not loss.
-LAUNCH_BAD_REFL_DB           = -50.0  # launch reflectance threshold (signed,
+LAUNCH_BAD_REFL_DB           = -49.9  # launch reflectance threshold (signed,
                                       #   strict greater-than).  Rule:
-                                      #     refl <= -50 dB → good (no flag)
-                                      #     refl >  -50 dB → bad  (flag)
+                                      #     refl <= -49.9 dB → good (no flag)
+                                      #     refl >  -49.9 dB → bad  (flag)
                                       #   Healthy buried launch is -50 to -55 dB
-                                      #   (passes); damaged / dirty connectors
-                                      #   read -10 to -30 dB (flag).  -50.01 is
-                                      #   good, -49.99 is bad, -54.8 is good.
+                                      #   and passes cleanly.  Borderline values
+                                      #   that round to "-50.0" on display (e.g.
+                                      #   actual -49.97) were previously
+                                      #   flagged; -49.9 boundary lets those
+                                      #   through.  Damaged / dirty connectors
+                                      #   read -10 to -30 dB (flag).  -50.0 is
+                                      #   good, -49.9 is on the boundary (good),
+                                      #   -49.8 is bad, -54.8 is good.
 # ── FIELD-EVENT GAINER GATE ─────────────────────────────────────────────────
 # Mid-span events whose signed loss falls in the [-0.7, 0] dB range get
 # flagged as suspicious gainers — these are weak-gainer / near-zero events
