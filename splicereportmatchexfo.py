@@ -3244,13 +3244,28 @@ def main():
             span_km = round(np.median(top_quarter), 2)
 
     # ── Trace-based enhancement: detect breaks and refine span from raw trace ──
-    # Restore original events so trace enhancement can detect untrimmed files
-    for r in list(fibers_a.values()) + list(fibers_b.values()):
-        r['events'] = r.pop('_raw_events')
-
+    # Trace enhancement re-detects launch and far-end connector from the raw
+    # backscatter samples — only applicable when ``full_trace`` is present
+    # (JSON files carry it; SOR sources expose ``trace`` instead, which the
+    # enhancement function isn't wired to consume).  For SOR-only spans, the
+    # Pass-0 ``_normalize_untrimmed_events`` already did the launch / far-end
+    # trim from the events list, so we KEEP those normalized events instead
+    # of unconditionally restoring raw and then no-oping the enhancement —
+    # otherwise the launch 1F at ~1 km and the far-end connector 1F just
+    # before EOL slide back into the event list and get classified as
+    # REF / BEND on every fiber.
     n_trace_breaks = 0
     n_trace_enhanced = 0
     has_trace_data = any(r.get('full_trace') is not None for r in fibers_a.values())
+    if has_trace_data:
+        # Restore original events so trace enhancement can detect untrimmed
+        for r in list(fibers_a.values()) + list(fibers_b.values()):
+            r['events'] = r.pop('_raw_events')
+    else:
+        # SOR-only span — Pass-0 normalization stays.  Drop the raw-event
+        # stash to free the memory.
+        for r in list(fibers_a.values()) + list(fibers_b.values()):
+            r.pop('_raw_events', None)
     if has_trace_data:
         print(f"\nTrace analysis: detecting breaks and span boundaries from raw trace...")
 
