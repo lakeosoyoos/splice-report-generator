@@ -2879,17 +2879,6 @@ def scan_bidir_ghost_reflections(fibers_a, fibers_b, splices, existing_results,
 #  canonical example (refl=-83 dB, loss=0.096 dB, type=0F).
 # ═══════════════════════════════════════════════════════════════════════
 
-# Loss range for a merged-reflective event.  Below the lower bound it's
-# noise; above the upper bound the regular bend/splice passes already
-# own the classification.
-MERGED_REFL_LOSS_MIN_DB = 0.030
-MERGED_REFL_LOSS_MAX_DB = 0.150            # below the bidir-threshold
-                                           # half-range (0.160 / 2 + slack);
-                                           # any single-dir loss above this
-                                           # is owned by the bend / splice
-                                           # passes via existing_results
-
-
 def scan_merged_reflective_events(fibers_a, fibers_b, splices,
                                    existing_results, total_span_a,
                                    closure_match_km=None):
@@ -2897,10 +2886,12 @@ def scan_merged_reflective_events(fibers_a, fibers_b, splices,
     past every other pass.  Criteria for either direction:
       • Mid-span (≥ LAUNCH_FIBER_MAX from launch and EOL)
       • type='0F' / is_reflective=False (otherwise other passes handle it)
-      • refl < 0 (a real negative reflectance measurement)
-      • MERGED_REFL_LOSS_MIN_DB ≤ |splice_loss| ≤ MERGED_REFL_LOSS_MAX_DB
-      • Not within CLOSURE_MATCH_KM of any known splice closure
-      • Trace continues past the event (real OTDR data downstream)
+      • refl < 0 (a real negative reflectance measurement) — and that
+        is the ONLY signal we gate on.  Loss is NOT part of the gate:
+        a reflective event is a reflective event regardless of how
+        large or small the accompanying splice-loss measurement is.
+      • Trace continues past (EOL at least 1 km after the event)
+      • Not already flagged elsewhere (existing_results dedupe)
     Anchored to the nearest closure for ribbon-grid display.  Surfaces
     as is_ref=True (deep-orange 'ref' tier).
     """
@@ -2924,9 +2915,8 @@ def scan_merged_reflective_events(fibers_a, fibers_b, splices,
                 refl = e.get('reflection')
                 if refl is None or refl >= 0:
                     continue            # need a real negative refl
-                loss_abs = abs(e.get('splice_loss') or 0.0)
-                if not (MERGED_REFL_LOSS_MIN_DB <= loss_abs <= MERGED_REFL_LOSS_MAX_DB):
-                    continue
+                # NO loss filter — a reflective event is a reflective
+                # event regardless of the splice-loss magnitude.
                 # Mid-span only
                 if e['dist_km'] < LAUNCH_FIBER_MAX:
                     continue
