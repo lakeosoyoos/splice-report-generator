@@ -1669,6 +1669,37 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
     a_refl_median = _gather_launch_refls(fibers_a)
     b_refl_median = _gather_launch_refls(fibers_b)
 
+    # ── FQA: acquisition-duration signature per direction ──
+    # A span fails FQA if traces weren't all shot for the same duration.
+    # Build a per-direction "duration signature" = (NumberOfAverages,
+    # NominalPulseWidth_ns, acq_range), take the mode, and flag any
+    # fiber whose signature differs.  NumberOfAverages typically varies
+    # by direction (tech sets it per shoot) so each direction owns its
+    # own mode.
+    def _duration_signature(r):
+        cal = (r or {}).get('exfo_calibration') or {}
+        navg = cal.get('NumberOfAverages')
+        pw_s = cal.get('NominalPulseWidth') or cal.get('CalibratedPulseWidth')
+        pw_ns = int(round(pw_s * 1e9)) if pw_s else None
+        acq = (r or {}).get('acq_range')
+        if navg is None and pw_ns is None and acq is None:
+            return None
+        return (navg, pw_ns, acq)
+
+    def _mode_signature(fibers):
+        from collections import Counter
+        sigs = Counter()
+        for r in fibers.values():
+            s = _duration_signature(r)
+            if s is not None:
+                sigs[s] += 1
+        if not sigs:
+            return None
+        return sigs.most_common(1)[0][0]
+
+    a_dur_mode = _mode_signature(fibers_a)
+    b_dur_mode = _mode_signature(fibers_b)
+
     all_fibers = sorted(set(fibers_a.keys()) | set(fibers_b.keys()))
     issues = {}
 
@@ -1753,6 +1784,26 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                     if tb_refl >= bad_refl:
                         tags.append(f'BAD_TAILBOX_REFL{tb_refl:+.1f}dB')
 
+            # ── FQA: per-trace acquisition-duration check ──
+            # Compare this fiber's duration signature against the
+            # majority signature for this direction.  Mismatched traces
+            # fail FQA — the span shouldn't have been shot with mixed
+            # durations.  Tag carries this fiber's N_avg so the tech
+            # can see immediately how it differs from the mode.
+            dir_mode = a_dur_mode if dir_is_A else b_dur_mode
+            if dir_mode is not None:
+                this_sig = _duration_signature(r)
+                if this_sig is not None and this_sig != dir_mode:
+                    navg_this, pw_this, _ = this_sig
+                    navg_mode, pw_mode, _ = dir_mode
+                    bits = []
+                    if navg_this != navg_mode:
+                        bits.append(f"N_avg={navg_this} vs {navg_mode}")
+                    if pw_this != pw_mode:
+                        bits.append(f"PW={pw_this}ns vs {pw_mode}ns")
+                    detail = '; '.join(bits) if bits else 'sig-diff'
+                    tags.append(f'DURATION_MISMATCH({detail})')
+
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
         _check(rb, b_tags, b_refl_median, dir_is_A=False)
 
@@ -1765,7 +1816,8 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
         is_high = any(t.startswith(('NO_EVENTS',
                                     'HIGH_LAUNCH_LOSS', 'FILE_MISSING'))
                       for t in all_tags)
-        is_review = any(t.startswith(('BAD_LAUNCH_REFL', 'BAD_TAILBOX_REFL')) for t in all_tags)
+        is_review = any(t.startswith(('BAD_LAUNCH_REFL', 'BAD_TAILBOX_REFL',
+                                       'DURATION_MISMATCH')) for t in all_tags)
         severity = 'HIGH' if is_high else ('REVIEW' if is_review else 'WATCH')
 
         # Build a compact one-line summary (first 1–2 issue tags)

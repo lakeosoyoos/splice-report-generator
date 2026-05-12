@@ -264,13 +264,16 @@ def _explain_launch(info):
     pieces.append(
         "Triggered by one or more of: missing event table, fiber ends "
         "within 2 km of launch, launch-connector loss exceeds 1 dB, "
-        "launch-connector reflectance at or above −49.9 dB, OR "
+        "launch-connector reflectance at or above −49.9 dB, "
         "tailbox-connector reflectance at or above −49.9 dB / missing "
-        "tailbox (bare-glass cable end).  Healthy buried launch and "
-        "tailbox both reflect −50 to −55 dB; values closer to zero "
-        "indicate damaged / dirty / partially-cut connector — or, for "
-        "BAD_TAILBOX_REFL, that the cable end has no tailbox connector "
-        "installed at all.")
+        "tailbox (bare-glass cable end), OR the fiber was shot with a "
+        "different acquisition duration / pulse width than the majority "
+        "of fibers in this direction (DURATION_MISMATCH — FQA fails a "
+        "span when traces weren't all shot the same length).  Healthy "
+        "buried launch and tailbox both reflect −50 to −55 dB; values "
+        "closer to zero indicate damaged / dirty / partially-cut "
+        "connector — or, for BAD_TAILBOX_REFL, that the cable end has "
+        "no tailbox connector installed at all.")
     return ' '.join(pieces)
 
 
@@ -622,9 +625,13 @@ def build_explanation_pdf(all_results, splices, launch_issues, span_km,
         "reflectance at or above −49.9 dB), <b>BAD_TAILBOX_REFL</b> "
         "(tailbox connector reflectance at or above −49.9 dB, OR no "
         "tailbox event at all with a bad reflection on the 1E end — "
-        "indicates a missing / dirty tailbox).  Healthy buried "
-        "launch and tailbox both fall in the −50 to −55 dB range.  "
-        "Renders in the dedicated ILA:A / ILA:B columns of the xlsx.",
+        "indicates a missing / dirty tailbox), <b>DURATION_MISMATCH</b> "
+        "(this fiber's acquisition duration signature — N_averages, "
+        "pulse width — differs from the majority of fibers shot in this "
+        "direction; FQA fails a span when traces weren't all shot the "
+        "same length).  Healthy buried launch and tailbox both fall in "
+        "the −50 to −55 dB range.  Renders in the dedicated ILA:A / "
+        "ILA:B columns of the xlsx.",
         st['body']))
     if launch_issues:
         rows = []
