@@ -3336,12 +3336,46 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         c.font = Font(name=FONT_NAME, bold=True, size=FSIZE, color=tc)
         ws_leg.cell(row=i, column=2, value=desc).font = Font(name=FONT_NAME, size=FSIZE)
 
-    # ── Column widths ──
-    ws.column_dimensions['A'].width = 28
-    ws.column_dimensions['B'].width = 10
-    for si in range(n_splices + 1):
-        col_letter = openpyxl.utils.get_column_letter(si + 3)
-        ws.column_dimensions[col_letter].width = 22
+    # ── Column widths — auto-fit to actual content ──
+    # For Calibri 12 a character is ~1.1 Excel-width units; we use 1.15
+    # to leave a small visual margin and add 2 units of padding.  Cap at
+    # 60 to keep extreme labels from blowing out the grid.
+    CHAR_W   = 1.15
+    PADDING  = 2.0
+    MIN_W    = 6.0
+    MAX_W    = 60.0
+    n_cols = 2 + (n_splices + 1)            # col A + col B + splice cols
+    for col_idx in range(1, n_cols + 1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        widest = 0
+        for row in ws.iter_rows(min_col=col_idx, max_col=col_idx,
+                                values_only=True):
+            v = row[0]
+            if v is None:
+                continue
+            # Take the longest line in case the cell contains '\n'.
+            line_len = max((len(line) for line in str(v).splitlines()), default=0)
+            if line_len > widest:
+                widest = line_len
+        w = max(MIN_W, min(MAX_W, widest * CHAR_W + PADDING))
+        ws.column_dimensions[col_letter].width = w
+
+    # Auto-fit the legend sheet too.
+    for col_idx in range(1, ws_leg.max_column + 1):
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
+        widest = 0
+        for row in ws_leg.iter_rows(min_col=col_idx, max_col=col_idx,
+                                    values_only=True):
+            v = row[0]
+            if v is None:
+                continue
+            line_len = max((len(line) for line in str(v).splitlines()), default=0)
+            if line_len > widest:
+                widest = line_len
+        # Legend descriptions get a wider cap so they stay readable.
+        cap = 90.0 if col_idx == 2 else MAX_W
+        w = max(MIN_W, min(cap, widest * CHAR_W + PADDING))
+        ws_leg.column_dimensions[col_letter].width = w
 
     ws.freeze_panes = 'C4'
 
