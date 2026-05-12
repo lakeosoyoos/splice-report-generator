@@ -249,10 +249,14 @@ def _explain_launch(info):
         pieces.append("B-side tags: " + ', '.join(b_tags) + ".")
     pieces.append(
         "Triggered by one or more of: missing event table, fiber ends "
-        "within 2 km of launch, launch-connector loss exceeds 1 dB, or "
-        "launch-connector reflectance at or above −49.9 dB (healthy "
-        "buried launch reflects −50 to −55 dB; values closer to zero "
-        "indicate damaged / dirty / partially-cut connector).")
+        "within 2 km of launch, launch-connector loss exceeds 1 dB, "
+        "launch-connector reflectance at or above −49.9 dB, OR "
+        "tailbox-connector reflectance at or above −49.9 dB / missing "
+        "tailbox (bare-glass cable end).  Healthy buried launch and "
+        "tailbox both reflect −50 to −55 dB; values closer to zero "
+        "indicate damaged / dirty / partially-cut connector — or, for "
+        "BAD_TAILBOX_REFL, that the cable end has no tailbox connector "
+        "installed at all.")
     return ' '.join(pieces)
 
 
@@ -594,15 +598,19 @@ def build_explanation_pdf(all_results, splices, launch_issues, span_km,
         f"10. Orange — Launch-end Issues  ({len(launch_issues or {})} fibers)",
         st['h1']))
     story.append(Paragraph(
-        "Fibers with problems at the launch-end connector — broken at "
-        "the launch, damaged or dirty connector, missing event table, "
-        "or launch-loss / reflectance outside the healthy range.  "
+        "Fibers with problems at the launch-end connector OR the "
+        "tailbox-end connector — broken at the launch, damaged or dirty "
+        "connector, missing event table, missing tailbox (bare-glass "
+        "cable end), or reflectance outside the healthy range.  "
         "Rule: <b>NO_EVENTS</b>, <b>IMMEDIATE_END</b> (fiber ends "
         "within 2 km of launch), <b>HIGH_LAUNCH_LOSS</b> (launch "
         "connector loss > 1 dB), <b>BAD_LAUNCH_REFL</b> (launch "
-        "reflectance at or above −49.9 dB — healthy buried launch is "
-        "−50 to −55 dB).  Renders in the dedicated ILA:A / ILA:B "
-        "columns of the xlsx.",
+        "reflectance at or above −49.9 dB), <b>BAD_TAILBOX_REFL</b> "
+        "(tailbox connector reflectance at or above −49.9 dB, OR no "
+        "tailbox event at all with a bad reflection on the 1E end — "
+        "indicates a missing / dirty tailbox).  Healthy buried "
+        "launch and tailbox both fall in the −50 to −55 dB range.  "
+        "Renders in the dedicated ILA:A / ILA:B columns of the xlsx.",
         st['body']))
     if launch_issues:
         rows = []

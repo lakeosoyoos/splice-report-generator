@@ -1451,7 +1451,8 @@ def _bend_severity(loss):
 def split_offsplice_events_into_own_columns(all_results, splices,
                                               splice_dist_km=None,
                                               cluster_gap_km=0.200,
-                                              broke_cluster_gap_km=0.400):
+                                              broke_cluster_gap_km=0.400,
+                                              total_span_km=None):
     """Reassign bend / break / broke events that sit far from any
     splice into their own phantom columns.
 
@@ -1481,6 +1482,11 @@ def split_offsplice_events_into_own_columns(all_results, splices,
 
     # 1. Find bend / break / broke events that sit > splice_dist_km
     #    from any splice.
+    # Compute launch / tailbox exclusion zones — phantom columns here
+    # are almost always tailbox connectors with legitimate ~0.2 dB loss,
+    # not bends.  Drop them from the off-splice clustering pass too.
+    launch_zone_max = LAUNCH_FIBER_MAX
+    tailbox_zone_min = (total_span_km - LAUNCH_FIBER_MAX) if total_span_km else None
     candidates = []
     for key, r in all_results.items():
         if not isinstance(r, dict):
@@ -1489,6 +1495,11 @@ def split_offsplice_events_into_own_columns(all_results, splices,
             continue
         km = r.get('bidir_dist')
         if km is None:
+            continue
+        # Skip phantom-column creation inside the launch / tailbox zones.
+        if km < launch_zone_max:
+            continue
+        if tailbox_zone_min is not None and km > tailbox_zone_min:
             continue
         nearest = min(abs(km - sk) for sk in splice_kms) if splice_kms else float('inf')
         if nearest > splice_dist_km:
@@ -1696,6 +1707,52 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                 if refl >= bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
 
+            # ── Tailbox reflectance check (mirror of launch rule) ──
+            # A healthy cable end has a 1F tailbox connector reflecting
+            # better than -49.9 dB.  Two failure modes flag here:
+            #   (a) Missing tailbox: the cable ends in a 1E event with
+            #       bad reflectance and no preceding 1F connector in the
+            #       last 2 km (bare glass to air, e.g. F336 at -15.6 dB).
+            #   (b) Bad tailbox: the last 1F event before EOL has
+            #       refl >= -49.9 dB (dirty / damaged tailbox connector).
+            # A bad reflection on the 1E itself when there IS a good
+            # 1F tailbox in front of it just means the receive-pigtail
+            # end face is dirty — NOT a cable defect — and is ignored.
+            #
+            # IMPORTANT: use _raw_events (pre-normalization).  The
+            # normalize step strips the 1F tailbox event and carries the
+            # receive-pigtail's bare-glass EOL reflectance onto the
+            # moved 1E, which would make every fiber look like a missing
+            # tailbox.  Raw events preserve the original 1F/1E pair.
+            events_all = r.get('_raw_events') or r.get('events') or []
+            end_evt = next((e for e in events_all if e.get('is_end')), None)
+            if end_evt is not None:
+                # Find the last 1F-type reflective event within 2 km
+                # before the 1E (i.e. the tailbox candidate).
+                end_km = end_evt['dist_km']
+                tailbox_evt = None
+                for e in reversed(events_all):
+                    if e is end_evt or e.get('is_end'):
+                        continue
+                    if e['dist_km'] >= end_km:
+                        continue
+                    if (end_km - e['dist_km']) > 2.0:
+                        break
+                    if e.get('is_reflective') or str(e.get('type', '')).startswith('1F'):
+                        tailbox_evt = e
+                        break
+                if tailbox_evt is None:
+                    # Missing tailbox — EOL is bare glass.  Flag iff the
+                    # EOL itself has a bad reflection.
+                    end_refl = end_evt.get('reflection') or 0.0
+                    if end_refl >= bad_refl:
+                        tags.append(f'BAD_TAILBOX_REFL{end_refl:+.1f}dB')
+                else:
+                    # Tailbox present — flag iff IT has a bad reflection.
+                    tb_refl = tailbox_evt.get('reflection') or 0.0
+                    if tb_refl >= bad_refl:
+                        tags.append(f'BAD_TAILBOX_REFL{tb_refl:+.1f}dB')
+
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
         _check(rb, b_tags, b_refl_median, dir_is_A=False)
 
@@ -1708,7 +1765,7 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
         is_high = any(t.startswith(('NO_EVENTS',
                                     'HIGH_LAUNCH_LOSS', 'FILE_MISSING'))
                       for t in all_tags)
-        is_review = any(t.startswith(('BAD_LAUNCH_REFL',)) for t in all_tags)
+        is_review = any(t.startswith(('BAD_LAUNCH_REFL', 'BAD_TAILBOX_REFL')) for t in all_tags)
         severity = 'HIGH' if is_high else ('REVIEW' if is_review else 'WATCH')
 
         # Build a compact one-line summary (first 1–2 issue tags)
@@ -2175,6 +2232,14 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
         for e in rb['events']:
             if e['dist_km'] < 1.0 or e['is_end']:
                 continue
+            # B-side tailbox region — within LAUNCH_FIBER_MAX km of the
+            # B-direction EOL.  This is the launch connector on the OTHER
+            # cable end as seen from B; mirrored to A-frame it falls inside
+            # the A-launch zone, but POSITION_TOL (1.5 km) can pull these
+            # events onto the first real splice column.  Drop them here —
+            # detect_launch_issues() owns this region.
+            if e['dist_km'] > (b_span - LAUNCH_FIBER_MAX):
+                continue
 
             b_loss_signed = e['splice_loss']
             b_loss_abs = abs(b_loss_signed)
@@ -2385,6 +2450,14 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                 continue  # launch region — handled separately
             if eof_a is not None and e['dist_km'] >= eof_a:
                 continue  # post-EOL event detector noise (instrument tail)
+            # Tailbox region — within LAUNCH_FIBER_MAX km of the cable end.
+            # Mirror to the launch zone: events here belong to the tailbox
+            # connector or the receive pigtail and are handled exclusively
+            # by detect_launch_issues() (BAD_TAILBOX_REFL).  Normal tailbox
+            # connectors have 0.1–0.3 dB of legitimate connector loss that
+            # would otherwise leak into the splice report as false bends.
+            if eof_a is not None and e['dist_km'] > (eof_a - LAUNCH_FIBER_MAX):
+                continue
             loss = e.get('splice_loss') or 0.0
             # Bends are real attenuation → require POSITIVE signed loss
             # ≥ threshold.  Negative-signed events are gainer signatures
@@ -3373,7 +3446,7 @@ def main():
     # (broke fibers) share a column.
     pre_splice_ids = {id(sp) for sp in splices}
     all_results, splices = split_offsplice_events_into_own_columns(
-        all_results, splices)
+        all_results, splices, total_span_km=span_km)
     newly_added = [sp for sp in splices if id(sp) not in pre_splice_ids]
     if newly_added:
         print(f"  Pulled off-splice events into {len(newly_added)} "
