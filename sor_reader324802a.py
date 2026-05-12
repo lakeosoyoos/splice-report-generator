@@ -73,9 +73,20 @@ def _parse_fxd_params(data, blocks):
     num_pw      = struct.unpack_from('<H', data, body + 16)[0]
     pw_end      = body + 18 + num_pw * 2
     acq_range   = struct.unpack_from('<I', data, pw_end)[0]
+    # AveragingTime / Duration per SR-4731: uint16 at +38 of FxdParams
+    # body, stored in deciseconds (× 0.1 sec).  This is the "Duration"
+    # field shown under Test Parameters → Summary in the EXFO viewer.
+    # Field is between NumberOfAverages (uint32 @ +34) and the next
+    # block of acquisition metadata.
+    try:
+        avg_time_ds = struct.unpack_from('<H', data, body + 38)[0]
+        duration_sec = avg_time_ds * 0.1
+    except struct.error:
+        duration_sec = None
     return {
         'date_time': date_time, 'units': units,
         'wavelength': wavelength / 10.0, 'acq_range': acq_range,
+        'duration_sec': duration_sec,
     }
 
 
@@ -719,6 +730,7 @@ def parse_sor_full(filepath, trim=True):
         'start_index': si, 'end_index': ei,
         'full_points': len(full_trace),
         'date_time': fxd.get('date_time', 0),
+        'duration_sec': fxd.get('duration_sec'),
     }
     # ── Augment with EXFO proprietary block data when present ──
     prop = _parse_proprietary_block(data, blocks)

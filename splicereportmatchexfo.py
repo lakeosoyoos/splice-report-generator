@@ -1669,36 +1669,32 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
     a_refl_median = _gather_launch_refls(fibers_a)
     b_refl_median = _gather_launch_refls(fibers_b)
 
-    # ── FQA: acquisition-duration signature per direction ──
+    # ── FQA: acquisition-duration check per direction ──
     # A span fails FQA if traces weren't all shot for the same duration.
-    # Build a per-direction "duration signature" = (NumberOfAverages,
-    # NominalPulseWidth_ns, acq_range), take the mode, and flag any
-    # fiber whose signature differs.  NumberOfAverages typically varies
-    # by direction (tech sets it per shoot) so each direction owns its
-    # own mode.
-    def _duration_signature(r):
-        cal = (r or {}).get('exfo_calibration') or {}
-        navg = cal.get('NumberOfAverages')
-        pw_s = cal.get('NominalPulseWidth') or cal.get('CalibratedPulseWidth')
-        pw_ns = int(round(pw_s * 1e9)) if pw_s else None
-        acq = (r or {}).get('acq_range')
-        if navg is None and pw_ns is None and acq is None:
+    # We use the "Duration" field as shown in the EXFO viewer's Test
+    # Parameters / Summary section, which is the SR-4731 AveragingTime
+    # field (uint16 deciseconds at +38 of FxdParams body) — exposed by
+    # the SOR parser as r['duration_sec'].  Per-direction mode wins;
+    # any fiber whose duration differs from its direction's mode flags
+    # DURATION_MISMATCH.
+    def _duration_sec(r):
+        if r is None:
             return None
-        return (navg, pw_ns, acq)
+        return r.get('duration_sec')
 
-    def _mode_signature(fibers):
+    def _mode_duration(fibers):
         from collections import Counter
-        sigs = Counter()
+        durs = Counter()
         for r in fibers.values():
-            s = _duration_signature(r)
-            if s is not None:
-                sigs[s] += 1
-        if not sigs:
+            d = _duration_sec(r)
+            if d is not None:
+                durs[d] += 1
+        if not durs:
             return None
-        return sigs.most_common(1)[0][0]
+        return durs.most_common(1)[0][0]
 
-    a_dur_mode = _mode_signature(fibers_a)
-    b_dur_mode = _mode_signature(fibers_b)
+    a_dur_mode = _mode_duration(fibers_a)
+    b_dur_mode = _mode_duration(fibers_b)
 
     all_fibers = sorted(set(fibers_a.keys()) | set(fibers_b.keys()))
     issues = {}
@@ -1785,24 +1781,15 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                         tags.append(f'BAD_TAILBOX_REFL{tb_refl:+.1f}dB')
 
             # ── FQA: per-trace acquisition-duration check ──
-            # Compare this fiber's duration signature against the
-            # majority signature for this direction.  Mismatched traces
-            # fail FQA — the span shouldn't have been shot with mixed
-            # durations.  Tag carries this fiber's N_avg so the tech
-            # can see immediately how it differs from the mode.
+            # Compare this fiber's "Duration" (seconds — the SR-4731
+            # AveragingTime as shown under Test Parameters → Summary in
+            # EXFO) against the majority duration for this direction.
+            # Mismatched traces fail FQA: the span shouldn't have been
+            # shot with mixed durations.
             dir_mode = a_dur_mode if dir_is_A else b_dur_mode
-            if dir_mode is not None:
-                this_sig = _duration_signature(r)
-                if this_sig is not None and this_sig != dir_mode:
-                    navg_this, pw_this, _ = this_sig
-                    navg_mode, pw_mode, _ = dir_mode
-                    bits = []
-                    if navg_this != navg_mode:
-                        bits.append(f"N_avg={navg_this} vs {navg_mode}")
-                    if pw_this != pw_mode:
-                        bits.append(f"PW={pw_this}ns vs {pw_mode}ns")
-                    detail = '; '.join(bits) if bits else 'sig-diff'
-                    tags.append(f'DURATION_MISMATCH({detail})')
+            this_dur = _duration_sec(r)
+            if dir_mode is not None and this_dur is not None and this_dur != dir_mode:
+                tags.append(f'DURATION_MISMATCH({this_dur:.1f}s vs {dir_mode:.1f}s)')
 
         _check(ra, a_tags, a_refl_median, dir_is_A=True)
         _check(rb, b_tags, b_refl_median, dir_is_A=False)
