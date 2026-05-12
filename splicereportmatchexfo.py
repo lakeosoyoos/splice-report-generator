@@ -2869,6 +2869,121 @@ def scan_bidir_ghost_reflections(fibers_a, fibers_b, splices, existing_results,
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  STEP 4b'' — May 12 addition: EXFO "merged reflective" event detection
+#  EXFO classifies some mid-span events as type='0F' with is_reflective=
+#  False, yet still records a non-zero negative reflection value.  Its
+#  viewer labels them "Merged Reflective; Non-reflective" — the event is
+#  both a small splice loss AND a faint connector/mech-splice reflection.
+#  Our earlier passes all skip these because they trust the 0F type
+#  and the is_reflective=False flag.  F541 ELMMIL @ km 62.51 is the
+#  canonical example (refl=-83 dB, loss=0.096 dB, type=0F).
+# ═══════════════════════════════════════════════════════════════════════
+
+# Loss range for a merged-reflective event.  Below the lower bound it's
+# noise; above the upper bound the regular bend/splice passes already
+# own the classification.
+MERGED_REFL_LOSS_MIN_DB = 0.030
+MERGED_REFL_LOSS_MAX_DB = 0.150            # below the bidir-threshold
+                                           # half-range (0.160 / 2 + slack);
+                                           # any single-dir loss above this
+                                           # is owned by the bend / splice
+                                           # passes via existing_results
+
+
+def scan_merged_reflective_events(fibers_a, fibers_b, splices,
+                                   existing_results, total_span_a,
+                                   closure_match_km=None):
+    """Catch EXFO 'Merged Reflective; Non-reflective' events that slip
+    past every other pass.  Criteria for either direction:
+      • Mid-span (≥ LAUNCH_FIBER_MAX from launch and EOL)
+      • type='0F' / is_reflective=False (otherwise other passes handle it)
+      • refl < 0 (a real negative reflectance measurement)
+      • MERGED_REFL_LOSS_MIN_DB ≤ |splice_loss| ≤ MERGED_REFL_LOSS_MAX_DB
+      • Not within CLOSURE_MATCH_KM of any known splice closure
+      • Trace continues past the event (real OTDR data downstream)
+    Anchored to the nearest closure for ribbon-grid display.  Surfaces
+    as is_ref=True (deep-orange 'ref' tier).
+    """
+    cm = CLOSURE_MATCH_KM if closure_match_km is None else closure_match_km
+    new_results = {}
+    closure_centers = [(si, sp.get('position_km_refined', sp['position_km']))
+                       for si, sp in enumerate(splices)]
+
+    def _classify_one(fibers, frame_to_a_km, dir_label):
+        for fnum, r in fibers.items():
+            evs = r.get('events') or []
+            end_evt = next((e for e in evs if e.get('is_end')), None)
+            if end_evt is None:
+                continue
+            eof_km = end_evt['dist_km']
+            for e in evs:
+                if e.get('is_end'):
+                    continue
+                if e.get('is_reflective') or str(e.get('type','')).startswith('1F'):
+                    continue            # handled by other passes
+                refl = e.get('reflection')
+                if refl is None or refl >= 0:
+                    continue            # need a real negative refl
+                loss_abs = abs(e.get('splice_loss') or 0.0)
+                if not (MERGED_REFL_LOSS_MIN_DB <= loss_abs <= MERGED_REFL_LOSS_MAX_DB):
+                    continue
+                # Mid-span only
+                if e['dist_km'] < LAUNCH_FIBER_MAX:
+                    continue
+                if e['dist_km'] > (eof_km - LAUNCH_FIBER_MAX):
+                    continue
+                # Translate to A-frame for closure matching / dedup
+                a_km = frame_to_a_km(e['dist_km'], eof_km)
+                # The trace must clearly continue past — simple check
+                # rather than _trace_continues_past which requires
+                # another non-end event past the candidate (often
+                # absent on a clean span past the last splice).
+                if (eof_km - e['dist_km']) < 1.0:
+                    continue
+                # Anchor to nearest closure for display.  Unlike the
+                # bidir-ghost scan, we do NOT skip events that sit at
+                # a known closure — those are precisely the ones we
+                # want to surface (Pass 1 missed them because the
+                # bidir loss came out too small even though one
+                # direction shows a measurable reflection).  The
+                # existing_results dedupe below prevents double-
+                # flagging anything Pass 1 already caught.
+                nearest_si, best_d = None, float('inf')
+                for si, c in closure_centers:
+                    d = abs(a_km - c)
+                    if d < best_d:
+                        best_d, nearest_si = d, si
+                if nearest_si is None:
+                    continue
+                if ((fnum, nearest_si) in existing_results
+                        or (fnum, nearest_si) in new_results):
+                    continue
+                loss = e.get('splice_loss') or 0.0
+                label = (f"{fnum} ref @ {a_km:.2f}km "
+                         f"(refl {refl:.0f}dB merged, {dir_label}-side)")
+                new_results[(fnum, nearest_si)] = {
+                    'fiber': fnum, 'splice_idx': nearest_si,
+                    'bidir_loss': loss, 'a_loss': loss if dir_label=='A' else None,
+                    'b_loss': loss if dir_label=='B' else None,
+                    'bidir_dist': a_km,
+                    'is_break': False, 'is_broke': False, 'is_bend': False,
+                    'is_ref': True,
+                    'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                    'is_flagged': True,
+                    'event_source': 'ref_merged_exfo',
+                    'event_type': e.get('type'),
+                    'label': label,
+                    'fresnel': refl,
+                }
+
+    # A-direction frame = A's own km
+    _classify_one(fibers_a, lambda km, _eof: km, 'A')
+    # B-direction frame mirrors to A-frame via b_span - b_km
+    _classify_one(fibers_b, lambda km, eof: eof - km, 'B')
+    return new_results
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  STEP 4c — APRIL 23 revision: restricted past-break B-fill scan
 #  (replaces the blanket Pass-2 B scan with a targeted past-break pass)
 # ═══════════════════════════════════════════════════════════════════════
@@ -3678,15 +3793,23 @@ def main():
     )
     print(f"  Pass 2b results: {len(ghost_refl)} ghost-reflection events")
 
+    print(f"\nPass 2b': Scanning EXFO 'Merged Reflective; Non-reflective' "
+          f"events (refl<0 on a 0F-typed loss event)...")
+    seen_so_far = {**results, **a_standalone, **ghost_refl}
+    merged_refl = scan_merged_reflective_events(
+        fibers_a, fibers_b, splices, seen_so_far, span_km,
+    )
+    print(f"  Pass 2b' results: {len(merged_refl)} merged-reflective events")
+
     print(f"\nPass 2c: Scanning B-direction PAST A-side breaks (B-fill only)...")
     b_pastbreak = scan_b_past_breaks(
         fibers_a, fibers_b, splices, args.threshold, results, span_km,
     )
     print(f"  Pass 2c results: {len(b_pastbreak)} B-fill events")
 
-    # Merge — Pass 1 takes priority; then standalone; then ghost refl; then B-fill
-    all_results = {**results, **a_standalone, **ghost_refl, **b_pastbreak}
-    b_results = {**a_standalone, **ghost_refl, **b_pastbreak}  # kept for any downstream count code
+    # Merge — Pass 1 takes priority; then standalone; then ghost refl; then merged refl; then B-fill
+    all_results = {**results, **a_standalone, **ghost_refl, **merged_refl, **b_pastbreak}
+    b_results = {**a_standalone, **ghost_refl, **merged_refl, **b_pastbreak}
 
     # Field-gainer annotation — flag mid-span events whose signed loss
     # falls in [-0.7, 0] dB (suspicious near-zero / weak-gainer events).
