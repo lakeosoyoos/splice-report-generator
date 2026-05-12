@@ -3102,47 +3102,50 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     n_splices = len(splices)
 
     # ── Styles ──
-    hdr_font    = Font(bold=True, size=10, color="FFFFFF")
+    # Font family / size: Calibri 12 across the board per tech direction.
+    FONT_NAME = "Calibri"
+    FSIZE     = 12
+    hdr_font    = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     hdr_fill    = PatternFill(start_color="1F4E79", end_color="1F4E79", fill_type="solid")
-    data_font   = Font(size=8)
-    ribbon_font = Font(size=9)
-    a_km_font   = Font(bold=True, size=9, color="1F4E79")
-    b_km_font   = Font(bold=True, size=9, color="8B0000")
+    data_font   = Font(name=FONT_NAME, size=FSIZE)
+    ribbon_font = Font(name=FONT_NAME, size=FSIZE)
+    a_km_font   = Font(name=FONT_NAME, bold=True, size=FSIZE, color="1F4E79")
+    b_km_font   = Font(name=FONT_NAME, bold=True, size=FSIZE, color="8B0000")
 
     # Cell fill/font for each event type
     red_fill    = PatternFill(start_color="FFC7CE", end_color="FFC7CE", fill_type="solid")   # A+B reburn
     break_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # break
-    break_font  = Font(bold=True, size=8, color="FFFFFF")
+    break_font  = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     # BROKE is now rendered the same as BREAK — both are
     # physical damage where the fiber has lost transmission.  Same red fill,
     # same white bold text, same category in the tech's eye.
     broke_fill  = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")   # red
-    broke_font  = Font(bold=True, size=8, color="FFFFFF")
+    broke_font  = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     # In-line REFLECTIVE event (connector / mech splice / angled cleave)
     # — reflective + Fresnel but the trace clearly continues past it.
     # Distinct from BREAK red so the eye separates "fiber's still alive
     # and reflecting" from "fiber's gone".
     ref_fill    = PatternFill(start_color="E64A19", end_color="E64A19", fill_type="solid")   # deep orange-red
-    ref_font    = Font(bold=True, size=8, color="FFFFFF")
+    ref_font    = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")   # B-fill past break
-    bfill_font  = Font(size=8, color="1F4E79")
+    bfill_font  = Font(name=FONT_NAME, size=FSIZE, color="1F4E79")
     dz_fill     = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")   # dead zone (gray)
-    dz_font     = Font(size=8, italic=True, color="3F3F3F")
+    dz_font     = Font(name=FONT_NAME, size=FSIZE, italic=True, color="3F3F3F")
     gainer_fill = PatternFill(start_color="A5D6A7", end_color="A5D6A7", fill_type="solid")   # field gainer (mint green)
-    gainer_font = Font(bold=True, size=8, color="1B5E20")
+    gainer_font = Font(name=FONT_NAME, bold=True, size=FSIZE, color="1B5E20")
     aonly_fill  = PatternFill(start_color="FFF2CC", end_color="FFF2CC", fill_type="solid")   # A-only (light yellow, est bidir OK)
-    aonly_font  = Font(size=8, color="7F6000")
+    aonly_font  = Font(name=FONT_NAME, size=FSIZE, color="7F6000")
     aonly_fill2 = PatternFill(start_color="FF7043", end_color="FF7043", fill_type="solid")   # A-only (coral, est bidir >= threshold) — deliberately non-yellow
-    aonly_font2 = Font(bold=True, size=8, color="FFFFFF")
+    aonly_font2 = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     bonly_fill  = PatternFill(start_color="E8D5F5", end_color="E8D5F5", fill_type="solid")   # B-only (lavender, est bidir OK)
-    bonly_font  = Font(size=8, color="4B0082")
+    bonly_font  = Font(name=FONT_NAME, size=FSIZE, color="4B0082")
     bonly_fill2 = PatternFill(start_color="C084FC", end_color="C084FC", fill_type="solid")   # B-only (purple, est bidir >= threshold)
-    bonly_font2 = Font(bold=True, size=8, color="1A0033")
+    bonly_font2 = Font(name=FONT_NAME, bold=True, size=FSIZE, color="1A0033")
     # BEND: teal / cyan — clearly distinct from splice colors so bends stand out
     # BEND cells: single yellow fill for every bend (no severity shading).
     # Matches the tech's yellow-highlight style on Cle Elum.
     bend_fill        = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
-    bend_font        = Font(bold=True, size=8, color="5D4037")
+    bend_font        = Font(name=FONT_NAME, bold=True, size=FSIZE, color="5D4037")
     # Keep the old three-name aliases pointing at the single fill so any
     # downstream reference still resolves.  bend_font_high is just bend_font.
     bend_fill_watch  = bend_fill
@@ -3155,7 +3158,7 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     # distinct from the pink A+B reburn fill.  Severity tiers were
     # collapsed per tech feedback — a launch issue is a launch issue.
     launch_fill        = PatternFill(start_color="FFA500", end_color="FFA500", fill_type="solid")
-    launch_font        = Font(bold=True, size=8, color="5D2E00")
+    launch_font        = Font(name=FONT_NAME, bold=True, size=FSIZE, color="5D2E00")
     # Back-compat aliases (in case anything else in the codebase still
     # references the per-severity names)
     launch_fill_high = launch_fill_review = launch_fill_watch = launch_fill
@@ -3325,13 +3328,13 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Orange",     "FFA500", "5D2E00", "LAUNCH — fiber has a launch-end issue.  Loss rule: launch_loss >= -0.5 dB (anything weaker than a -0.5 dB gainer flags).  Reflectance rule: refl > -15 dB (damaged / dirty connector).  Plus missing file, empty event table.  Single tier — no WATCH/REVIEW/HIGH split.  Appears in ILA column.  Distinct from pink A+B reburn."),
         ("Mint Green", "A5D6A7", "1B5E20", "FIELD GAINER — mid-span event whose signed loss is in [-0.7, 0] dB (suspicious near-zero / weak-gainer event).  Excludes events within the launch zone or end-of-fiber region.  Overrides the geometric BEND tag in the [-0.7, -0.090] overlap range."),
     ]
-    ws_leg.cell(row=1, column=1, value="Color").font = Font(bold=True, size=10)
-    ws_leg.cell(row=1, column=2, value="Meaning").font = Font(bold=True, size=10)
+    ws_leg.cell(row=1, column=1, value="Color").font = Font(name=FONT_NAME, bold=True, size=FSIZE)
+    ws_leg.cell(row=1, column=2, value="Meaning").font = Font(name=FONT_NAME, bold=True, size=FSIZE)
     for i, (name, fc, tc, desc) in enumerate(legend_items, 2):
         c = ws_leg.cell(row=i, column=1, value=name)
         c.fill = PatternFill(start_color=fc, end_color=fc, fill_type="solid")
-        c.font = Font(bold=True, size=9, color=tc)
-        ws_leg.cell(row=i, column=2, value=desc).font = Font(size=9)
+        c.font = Font(name=FONT_NAME, bold=True, size=FSIZE, color=tc)
+        ws_leg.cell(row=i, column=2, value=desc).font = Font(name=FONT_NAME, size=FSIZE)
 
     # ── Column widths ──
     ws.column_dimensions['A'].width = 28
