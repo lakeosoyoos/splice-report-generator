@@ -73,14 +73,15 @@ def _parse_fxd_params(data, blocks):
     num_pw      = struct.unpack_from('<H', data, body + 16)[0]
     pw_end      = body + 18 + num_pw * 2
     acq_range   = struct.unpack_from('<I', data, pw_end)[0]
-    # AveragingTime / Duration per SR-4731: uint16 at +38 of FxdParams
-    # body, stored in deciseconds (× 0.1 sec).  This is the "Duration"
+    # Duration: uint16 at +38 of FxdParams body, stored in whole
+    # seconds (not deciseconds as SR-4731 nominally specifies — EXFO
+    # writes the raw second-count here).  This is the "Duration"
     # field shown under Test Parameters → Summary in the EXFO viewer.
-    # Field is between NumberOfAverages (uint32 @ +34) and the next
-    # block of acquisition metadata.
+    # Field sits between NumberOfAverages (uint32 @ +34) and the next
+    # block of acquisition metadata.  Verified against viewer: a SOR
+    # whose viewer shows "15 s" has 15 at this offset (not 150).
     try:
-        avg_time_ds = struct.unpack_from('<H', data, body + 38)[0]
-        duration_sec = avg_time_ds * 0.1
+        duration_sec = float(struct.unpack_from('<H', data, body + 38)[0])
     except struct.error:
         duration_sec = None
     return {
