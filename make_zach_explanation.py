@@ -139,6 +139,20 @@ def _explain_bend(r):
 def _explain_ref(r):
     bd = r.get('bidir_loss')
     refl = r.get('fresnel')
+    src = r.get('event_source', '')
+    if src == 'ref_bidir_ghost':
+        return (
+            f"Bidirectional ghost reflection.  Mid-span 1F reflective "
+            f"event with near-zero loss ({_fmt_loss(bd)} dB) and a faint "
+            f"Fresnel reflection ({(refl or 0):.0f} dB) — but the SAME "
+            "feature shows in BOTH directions at the mirror-matched km "
+            "(±100 m), so it is NOT instrument noise.  Real physical "
+            "cause: faint connector pair, mechanical splice, angled "
+            "cleave, or a downstream reflector creating a ghost.  "
+            "Would slip past the regular loss-threshold gates because "
+            "the loss is below 0.030 dB; the bidirectional-mirror check "
+            "is what lets us call it out."
+        )
     return (
         f"Reflective event (1F type) with Fresnel reflection "
         f"{(refl or 0):.0f} dB and bidir loss {_fmt_loss(bd)} dB.  "

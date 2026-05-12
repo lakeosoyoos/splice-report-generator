@@ -2658,6 +2658,139 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  STEP 4b' — May 12 addition: bidirectional ghost-reflection scan
+#  (mid-span 1F reflective events with near-zero loss that show in BOTH
+#   directions at the same mirrored km — e.g. F64 at km 40.27 on Long
+#   Shots).  These slip past the loss-threshold gates of every other
+#   pass but are real physical features (faint connector, mech splice,
+#   ghost from a downstream reflector) that the report should call out.
+# ═══════════════════════════════════════════════════════════════════════
+
+# Mirror tolerance for the bidirectional confirmation.  Real physical
+# features mirror within ±50 m on well-OTDR'd cables; 100 m gives
+# breathing room for fibers with slightly different total lengths.
+GHOST_REFL_MIRROR_TOL_KM = 0.100
+# Maximum absolute splice loss either direction may show — anything
+# above this is no longer a "no-loss" event and the other passes will
+# pick it up under their own rules.
+GHOST_REFL_MAX_LOSS_DB   = 0.030
+
+
+def scan_bidir_ghost_reflections(fibers_a, fibers_b, splices, existing_results,
+                                 total_span_a, closure_match_km=None):
+    """Flag mid-span 1F reflective events that appear in BOTH A and B at
+    mirror-matched positions with near-zero loss.  Filters:
+      • Event must be 1F (is_reflective=True), not is_end.
+      • Inside cable proper: 1 km from launch, LAUNCH_FIBER_MAX from EOL.
+      • Not within CLOSURE_MATCH_KM of any known splice closure (otherwise
+        it's just a reflective splice already accounted for).
+      • |splice_loss| <= GHOST_REFL_MAX_LOSS_DB in BOTH directions.
+      • B-direction has a matching 1F within GHOST_REFL_MIRROR_TOL_KM of
+        the mirror km (b_span - a_km).
+    Returns dict (fnum, splice_idx) -> result, mirroring the structure of
+    the other scan_* functions.  splice_idx is the nearest known closure
+    (display anchor only).
+    """
+    cm = CLOSURE_MATCH_KM if closure_match_km is None else closure_match_km
+    new_results = {}
+    closure_centers = [(si, sp.get('position_km_refined', sp['position_km']))
+                       for si, sp in enumerate(splices)]
+
+    for fnum, ra in fibers_a.items():
+        rb = fibers_b.get(fnum)
+        if rb is None:
+            continue
+        # Need a B-direction EOL to mirror against
+        b_ends = [e for e in rb.get('events', []) if e.get('is_end')]
+        if not b_ends:
+            continue
+        b_span = b_ends[0]['dist_km']
+        a_ends = [e for e in ra.get('events', []) if e.get('is_end')]
+        if not a_ends:
+            continue
+        a_eof = a_ends[0]['dist_km']
+
+        # Pre-index B reflective non-end events for fast lookup.
+        b_refl_events = [
+            be for be in rb.get('events', [])
+            if (be.get('is_reflective') or str(be.get('type', '')).startswith('1F'))
+               and not be.get('is_end')
+               and be['dist_km'] >= 1.0
+               and be['dist_km'] <= (b_span - LAUNCH_FIBER_MAX)
+               and abs(be.get('splice_loss') or 0.0) <= GHOST_REFL_MAX_LOSS_DB
+        ]
+        if not b_refl_events:
+            continue
+
+        for ae in ra.get('events', []):
+            if ae.get('is_end'):
+                continue
+            if not (ae.get('is_reflective') or str(ae.get('type', '')).startswith('1F')):
+                continue
+            a_km = ae['dist_km']
+            if a_km < 1.0:
+                continue                  # launch zone
+            if a_km > (a_eof - LAUNCH_FIBER_MAX):
+                continue                  # tailbox zone
+            if abs(ae.get('splice_loss') or 0.0) > GHOST_REFL_MAX_LOSS_DB:
+                continue                  # has loss — other passes own it
+
+            # Skip if at a known splice closure (already classified there)
+            at_closure = any(abs(a_km - c) <= cm for _, c in closure_centers)
+            if at_closure:
+                continue
+
+            # Mirror-match in B direction
+            target_b_km = b_span - a_km
+            be_match = None
+            best_d = float('inf')
+            for be in b_refl_events:
+                d = abs(be['dist_km'] - target_b_km)
+                if d < best_d and d <= GHOST_REFL_MIRROR_TOL_KM:
+                    best_d = d
+                    be_match = be
+            if be_match is None:
+                continue
+
+            # Anchor to nearest known closure for display
+            nearest_si = None
+            nearest_d = float('inf')
+            for si, c in closure_centers:
+                d = abs(a_km - c)
+                if d < nearest_d:
+                    nearest_d = d
+                    nearest_si = si
+            if nearest_si is None:
+                continue
+
+            # Skip if already accounted for at this anchor closure
+            if (fnum, nearest_si) in existing_results or (fnum, nearest_si) in new_results:
+                continue
+
+            a_refl = ae.get('reflection') or 0.0
+            b_refl = be_match.get('reflection') or 0.0
+            label = (f"{fnum} ref @ {a_km:.2f}km "
+                     f"(refl {a_refl:.0f}/{b_refl:.0f}dB bidir)")
+            new_results[(fnum, nearest_si)] = {
+                'fiber': fnum, 'splice_idx': nearest_si,
+                'bidir_loss': round(((ae.get('splice_loss') or 0.0)
+                                     + (be_match.get('splice_loss') or 0.0)) / 2.0, 4),
+                'a_loss': ae.get('splice_loss') or 0.0,
+                'b_loss': be_match.get('splice_loss') or 0.0,
+                'bidir_dist': a_km,
+                'is_break': False, 'is_broke': False, 'is_bend': False,
+                'is_ref': True,
+                'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
+                'is_flagged': True,
+                'event_source': 'ref_bidir_ghost',
+                'event_type': ae.get('type'),
+                'label': label,
+                'fresnel': a_refl,
+            }
+    return new_results
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  STEP 4c — APRIL 23 revision: restricted past-break B-fill scan
 #  (replaces the blanket Pass-2 B scan with a targeted past-break pass)
 # ═══════════════════════════════════════════════════════════════════════
@@ -3422,15 +3555,23 @@ def main():
     print(f"  Pass 2a results: {len(a_standalone)} events "
           f"(bends={n_p2a_bend}, breaks={n_p2a_break})")
 
-    print(f"\nPass 2b: Scanning B-direction PAST A-side breaks (B-fill only)...")
+    print(f"\nPass 2b: Scanning bidirectional ghost reflections "
+          f"(mid-span 1F with near-zero loss in BOTH directions)...")
+    seen_so_far = {**results, **a_standalone}
+    ghost_refl = scan_bidir_ghost_reflections(
+        fibers_a, fibers_b, splices, seen_so_far, span_km,
+    )
+    print(f"  Pass 2b results: {len(ghost_refl)} ghost-reflection events")
+
+    print(f"\nPass 2c: Scanning B-direction PAST A-side breaks (B-fill only)...")
     b_pastbreak = scan_b_past_breaks(
         fibers_a, fibers_b, splices, args.threshold, results, span_km,
     )
-    print(f"  Pass 2b results: {len(b_pastbreak)} B-fill events")
+    print(f"  Pass 2c results: {len(b_pastbreak)} B-fill events")
 
-    # Merge — Pass 1 takes priority; then standalone; then B-fill
-    all_results = {**results, **a_standalone, **b_pastbreak}
-    b_results = {**a_standalone, **b_pastbreak}  # kept for any downstream count code
+    # Merge — Pass 1 takes priority; then standalone; then ghost refl; then B-fill
+    all_results = {**results, **a_standalone, **ghost_refl, **b_pastbreak}
+    b_results = {**a_standalone, **ghost_refl, **b_pastbreak}  # kept for any downstream count code
 
     # Field-gainer annotation — flag mid-span events whose signed loss
     # falls in [-0.7, 0] dB (suspicious near-zero / weak-gainer events).
