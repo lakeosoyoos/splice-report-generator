@@ -1669,6 +1669,49 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
     a_refl_median = _gather_launch_refls(fibers_a)
     b_refl_median = _gather_launch_refls(fibers_b)
 
+    # ── Population tailbox-refl baseline per direction ──
+    # The "tailbox refl" for a fiber = refl of the last 1F event within
+    # 2 km of the EOL; if no such 1F, the 1E refl itself.  Computing the
+    # median lets us tell "this fiber's tailbox is uniquely bad" apart
+    # from "the whole span was shot with bare-glass cable ends" (e.g.
+    # SANDUR's B-direction, where the receive jumper wasn't attached on
+    # any fiber).  A BAD_TAILBOX_REFL flag now requires the fiber to be
+    # an OUTLIER vs the direction's population — not just over the
+    # absolute threshold.
+    TAILBOX_OUTLIER_DB = 10.0    # refl must be >= this much worse
+                                 # (less negative) than population median
+                                 # to count as a defect
+    def _fiber_tailbox_refl(r):
+        if r is None:
+            return None
+        evts = r.get('_raw_events') or r.get('events') or []
+        end_evt = next((e for e in evts if e.get('is_end')), None)
+        if end_evt is None:
+            return None
+        end_km = end_evt['dist_km']
+        for e in reversed(evts):
+            if e is end_evt or e.get('is_end'):
+                continue
+            if e['dist_km'] >= end_km:
+                continue
+            if (end_km - e['dist_km']) > 2.0:
+                break
+            if e.get('is_reflective') or str(e.get('type','')).startswith('1F'):
+                return e.get('reflection')
+        # No 1F tailbox — use the 1E end-event refl
+        return end_evt.get('reflection')
+
+    def _pop_tailbox_median(fibers):
+        refls = []
+        for r in fibers.values():
+            v = _fiber_tailbox_refl(r)
+            if v is not None and v < 0:
+                refls.append(v)
+        return float(np.median(refls)) if refls else None
+
+    a_tb_median = _pop_tailbox_median(fibers_a)
+    b_tb_median = _pop_tailbox_median(fibers_b)
+
     # ── FQA: acquisition-duration check per direction ──
     # A span fails FQA if traces weren't all shot for the same duration.
     # We use the "Duration" field as shown in the EXFO viewer's Test
@@ -1751,34 +1794,22 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
             # receive-pigtail's bare-glass EOL reflectance onto the
             # moved 1E, which would make every fiber look like a missing
             # tailbox.  Raw events preserve the original 1F/1E pair.
-            events_all = r.get('_raw_events') or r.get('events') or []
-            end_evt = next((e for e in events_all if e.get('is_end')), None)
-            if end_evt is not None:
-                # Find the last 1F-type reflective event within 2 km
-                # before the 1E (i.e. the tailbox candidate).
-                end_km = end_evt['dist_km']
-                tailbox_evt = None
-                for e in reversed(events_all):
-                    if e is end_evt or e.get('is_end'):
-                        continue
-                    if e['dist_km'] >= end_km:
-                        continue
-                    if (end_km - e['dist_km']) > 2.0:
-                        break
-                    if e.get('is_reflective') or str(e.get('type', '')).startswith('1F'):
-                        tailbox_evt = e
-                        break
-                if tailbox_evt is None:
-                    # Missing tailbox — EOL is bare glass.  Flag iff the
-                    # EOL itself has a bad reflection.
-                    end_refl = end_evt.get('reflection') or 0.0
-                    if end_refl >= bad_refl:
-                        tags.append(f'BAD_TAILBOX_REFL{end_refl:+.1f}dB')
-                else:
-                    # Tailbox present — flag iff IT has a bad reflection.
-                    tb_refl = tailbox_evt.get('reflection') or 0.0
-                    if tb_refl >= bad_refl:
-                        tags.append(f'BAD_TAILBOX_REFL{tb_refl:+.1f}dB')
+            # Find this fiber's tailbox-refl (same logic as the
+            # population baseline).  Then apply BOTH conditions:
+            #   (a) the refl is at or above the absolute -49.9 dB
+            #       threshold (so we never flag a clean tailbox)
+            #   (b) AND it is >= TAILBOX_OUTLIER_DB worse than the
+            #       population median for this direction (so spans like
+            #       SANDUR-B, where every fiber has the same bare-glass
+            #       1E refl by virtue of how the shoot was done, don't
+            #       light up every fiber)
+            this_tb_refl = _fiber_tailbox_refl(r)
+            pop_median   = a_tb_median if dir_is_A else b_tb_median
+            if (this_tb_refl is not None
+                    and this_tb_refl >= bad_refl
+                    and pop_median is not None
+                    and (this_tb_refl - pop_median) >= TAILBOX_OUTLIER_DB):
+                tags.append(f'BAD_TAILBOX_REFL{this_tb_refl:+.1f}dB')
 
             # ── FQA: per-trace acquisition-duration check ──
             # Compare this fiber's "Duration" (seconds — the SR-4731
