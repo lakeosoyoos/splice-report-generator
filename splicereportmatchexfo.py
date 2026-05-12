@@ -1774,7 +1774,11 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                     if launch_loss_signed > hi_loss:
                         tags.append(f'LAUNCH_LOSS{launch_loss_signed:+.2f}dB')
                 refl = launch_evt.get('reflection') or 0.0
-                if refl >= bad_refl:
+                # refl < 0 precondition: refl == 0.0 means "not
+                # measured / not reflective," NOT "very bad
+                # reflectance."  Only flag when there is an actual
+                # negative reflection number to evaluate.
+                if refl < 0 and refl >= bad_refl:
                     tags.append(f'BAD_LAUNCH_REFL{refl:+.1f}dB')
 
             # ── Tailbox reflectance check (mirror of launch rule) ──
@@ -1805,7 +1809,11 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
             #       light up every fiber)
             this_tb_refl = _fiber_tailbox_refl(r)
             pop_median   = a_tb_median if dir_is_A else b_tb_median
+            # Same refl < 0 precondition as the launch check:
+            # this_tb_refl == 0.0 means the OTDR didn't measure a
+            # reflection (event isn't reflective), not "very bad."
             if (this_tb_refl is not None
+                    and this_tb_refl < 0
                     and this_tb_refl >= bad_refl
                     and pop_median is not None
                     and (this_tb_refl - pop_median) >= TAILBOX_OUTLIER_DB):
