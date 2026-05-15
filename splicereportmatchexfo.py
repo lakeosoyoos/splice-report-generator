@@ -1508,7 +1508,12 @@ def split_offsplice_events_into_own_columns(all_results, splices,
     for key, r in all_results.items():
         if not isinstance(r, dict):
             continue
-        if not (r.get('is_bend') or r.get('is_break') or r.get('is_broke')):
+        # Include is_ref so off-splice reflective events (e.g. F1008
+        # at km 32.15, 700 m before Splice 7) get their own column at
+        # their actual km position instead of being anchored to the
+        # nearest splice.  Same rule for bend / break / broke.
+        if not (r.get('is_bend') or r.get('is_break') or
+                r.get('is_broke') or r.get('is_ref')):
             continue
         km = r.get('bidir_dist')
         if km is None:
@@ -1550,18 +1555,27 @@ def split_offsplice_events_into_own_columns(all_results, splices,
                 continue
         clusters.append({'km_center': km, 'items': [(key, r)]})
 
-    # 3. Build new pseudo-splice entries.  A cluster containing any
-    #    break or broke event gets column_kind='damage' (red header);
-    #    otherwise 'bend' (yellow).
+    # 3. Build new pseudo-splice entries.  Priority of column-kind
+    #    when a cluster mixes event types (rare but possible):
+    #       damage (break / broke)  >  ref  >  bend
+    #    A cluster of only is_ref events gets column_kind='ref'
+    #    (deep-orange header, matches the ref cell color).
     new_phantoms = []
     for cluster in clusters:
         kinds = set()
         for _, r in cluster['items']:
             if r.get('is_break') or r.get('is_broke'):
                 kinds.add('damage')
+            elif r.get('is_ref'):
+                kinds.add('ref')
             else:
                 kinds.add('bend')
-        column_kind = 'damage' if 'damage' in kinds else 'bend'
+        if 'damage' in kinds:
+            column_kind = 'damage'
+        elif 'ref' in kinds and 'bend' not in kinds:
+            column_kind = 'ref'
+        else:
+            column_kind = 'bend'
         phantom = {
             'position_km': round(cluster['km_center'], 2),
             'position_km_refined': cluster['km_center'],
@@ -2293,11 +2307,19 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 loss_str = _format_loss(bidir_loss)
                 label = f"{fnum} {loss_str}"
 
+            # For is_ref classifications, the defining feature is the
+            # A-side reflective signature itself.  Use the A-event km as
+            # the cell's km (NOT the A/B average) so the off-splice
+            # column lands at the actual reflection's position, not
+            # halfway between A's reflection and B's matched loss event
+            # (which may be 700 m away — e.g. F1008 at km 32.15 paired
+            # with the B-side loss event at A-frame 32.83).
+            cell_km = ea['dist_km'] if is_ref else bidir_dist
             results[(fnum, si)] = {
                 'fiber': fnum, 'splice_idx': si,
                 'bidir_loss': bidir_loss,
                 'a_loss': ea['splice_loss'], 'b_loss': b_loss,
-                'bidir_dist': bidir_dist,
+                'bidir_dist': cell_km,
                 'is_break': is_break, 'is_broke': False, 'is_bend': is_bend,
                 'is_ref': is_ref,
                 'is_bfill': False, 'is_a_only': False, 'is_b_only': False,
@@ -3473,12 +3495,14 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     ws.cell(row=3, column=1).fill = hdr_fill
     ws.cell(row=3, column=2, value=f"ILA:{site_a}").font = hdr_font
     ws.cell(row=3, column=2).fill = hdr_fill
-    # Alternate fill colors for phantom (bend / damage) column headers so they
-    # stand out from the blue splice headers at a glance.
-    # Bend-column header: same yellow as the bend cells beneath it.
-    # Damage-column header: red (matches the red break/broke cells beneath).
+    # Alternate fill colors for phantom-column headers so they stand out
+    # from the blue splice headers at a glance.
+    # Bend  -column header: yellow      (matches bend cells)
+    # Damage-column header: red         (matches break/broke cells)
+    # Ref   -column header: deep orange (matches ref cells)
     hdr_fill_bend   = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     hdr_fill_damage = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")
+    hdr_fill_ref    = PatternFill(start_color="E64A19", end_color="E64A19", fill_type="solid")
     for si, sp in enumerate(splices):
         km_c, ft_c = _km_col(si), _ft_col(si)
         kind = sp.get('column_kind', 'splice')
@@ -3496,6 +3520,12 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
             cell = ws.cell(row=3, column=km_c, value=header)
             cell.fill = hdr_fill_damage
             ws.cell(row=3, column=ft_c).fill = hdr_fill_damage
+        elif kind == 'ref':
+            ref_km = sp.get('position_km_refined', sp['position_km'])
+            header = f"Ref @ {ref_km:.2f}km"
+            cell = ws.cell(row=3, column=km_c, value=header)
+            cell.fill = hdr_fill_ref
+            ws.cell(row=3, column=ft_c).fill = hdr_fill_ref
         else:
             disp_n = sp.get('splice_display_num', si + 1)
             cell = ws.cell(row=3, column=km_c, value=f"Splice {disp_n}")
