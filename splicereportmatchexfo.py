@@ -3668,6 +3668,30 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         col_letter = openpyxl.utils.get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = w
 
+    # ── Force Calibri 12 on EVERY cell ──
+    # openpyxl's workbook default ("Normal" style) is Calibri 11.  Cells
+    # that we don't explicitly assign a Font to (merged-cell siblings,
+    # blank splice cells, blank ILA cells, ribbon names without explicit
+    # font, etc.) inherit that default and end up at size 11.  Walk
+    # every cell in the used range and bump it to Calibri 12 unless it
+    # already has a deliberate non-default font (e.g. bold white on red
+    # for break/broke).  Preserves bold / italic / color decisions while
+    # standardising name + size.
+    default_font_kwargs = {'name': FONT_NAME, 'size': FSIZE}
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row,
+                             min_col=1, max_col=ws.max_column):
+        for cell in row:
+            f = cell.font
+            # Preserve any explicitly-set styling (bold/italic/color);
+            # only standardise the family + size.
+            cell.font = Font(
+                name=FONT_NAME,
+                size=FSIZE,
+                bold=bool(f.bold),
+                italic=bool(f.italic),
+                color=f.color,
+            )
+
     # Auto-fit the legend sheet too.
     for col_idx in range(1, ws_leg.max_column + 1):
         col_letter = openpyxl.utils.get_column_letter(col_idx)
@@ -3684,6 +3708,19 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         cap = 90.0 if col_idx == 2 else MAX_W
         w = max(MIN_W, min(cap, widest * CHAR_W + PADDING))
         ws_leg.column_dimensions[col_letter].width = w
+
+    # Force Calibri 12 on every legend cell too — same logic as above.
+    for row in ws_leg.iter_rows(min_row=1, max_row=ws_leg.max_row,
+                                 min_col=1, max_col=ws_leg.max_column):
+        for cell in row:
+            f = cell.font
+            cell.font = Font(
+                name=FONT_NAME,
+                size=FSIZE,
+                bold=bool(f.bold),
+                italic=bool(f.italic),
+                color=f.color,
+            )
 
     ws.freeze_panes = 'C4'
 
