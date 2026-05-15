@@ -309,6 +309,19 @@ with st.sidebar:
             help="Maximum offset between an A-side event and its mirror in "
                  "the B-direction trace.  Default 1.5 km.",
         )
+        min_pop_fraction = st.slider(
+            "Min fiber-coverage for a real splice closure (%)",
+            min_value=5, max_value=80,
+            value=int(round(engine.MIN_POP_FRACTION * 100)), step=1,
+            help="A km bucket only counts as a real splice closure if at "
+                 "least this fraction of fibers have an event there.  "
+                 "Per the tech rule, every fiber gets spliced at every "
+                 "closure, so a closure should cover most of the cable.  "
+                 "On well-shot spans, real splices show 60–75% coverage "
+                 "(some low-loss splices don't generate detectable "
+                 "events).  Phantom one-fiber bends sit at <10%.  "
+                 "Default 25% gives plenty of margin to separate them.",
+        )
 
     with st.expander("End zones (launch / tailbox)", expanded=False):
         launch_fiber_max_km = st.slider(
@@ -403,6 +416,7 @@ THRESHOLDS = {
     "BEND_THRESHOLD":     float(bend_thr),
     "CLOSURE_MATCH_KM":   float(closure_match_m) / 1000.0,
     "POSITION_TOL":       float(position_tol_km),
+    "MIN_POP_FRACTION":   float(min_pop_fraction) / 100.0,
     "LAUNCH_FIBER_MAX":   float(launch_fiber_max_km),
     "END_REGION_KM":      float(end_region_km),
     "LAUNCH_BAD_REFL_DB": float(bad_refl_db),

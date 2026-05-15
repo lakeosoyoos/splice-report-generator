@@ -115,7 +115,13 @@ REBURN_THRESHOLD = 0.160   # dB — flag anything at or above
 NOMINAL_SPLICE   = 0.159   # dB expected per splice
 RIBBON_SIZE      = 12      # fibers per ribbon
 POSITION_TOL     = 1.5     # km tolerance for matching A↔B events
-MIN_POP_SPLICE   = 20      # minimum fibers to define a splice position
+MIN_POP_SPLICE   = 20      # absolute floor: minimum fibers to define a splice position
+MIN_POP_FRACTION = 0.25    # fractional floor: minimum % of fibers that must
+                           # have an event at a km bucket to call it a real
+                           # closure.  Real splices show 60-75% coverage
+                           # (some low-loss splices don't generate detectable
+                           # events).  Phantom one-fiber bends show <10%.
+                           # 25% gives plenty of margin to separate the two.
 END_REGION_KM    = 3.0     # last N km considered "end of fiber"
 LAUNCH_FIBER_MAX = 3.0     # km — max distance for launch connector detection
 
@@ -771,9 +777,20 @@ def discover_splices(fibers_a):
             bk = round(e['dist_km'])
             bins[bk].append(e['dist_km'])
 
+    # Population gate: a km bucket must clear BOTH an absolute floor
+    # (MIN_POP_SPLICE) and a fractional floor (MIN_POP_FRACTION × total
+    # fibers).  Real splice closures show 60-75% population coverage on
+    # well-shot spans; phantom one-fiber bends sit at <10%.  The
+    # fractional gate eliminates the phantoms cleanly.  Per tech rule:
+    # every fiber gets spliced at every closure (a fiber that's broken
+    # short of a closure doesn't contribute, but those are few — the
+    # ratio still separates real from phantom by a wide margin).
+    n_fibers_total = len(fibers_a)
+    min_count = max(MIN_POP_SPLICE,
+                    int(round(n_fibers_total * MIN_POP_FRACTION)))
     splices = []
     for bk in sorted(bins.keys()):
-        if len(bins[bk]) < MIN_POP_SPLICE: continue
+        if len(bins[bk]) < min_count: continue
         avg_pos = round(np.mean(bins[bk]), 2)
         splices.append({'bin': bk, 'position_km': avg_pos, 'count': len(bins[bk])})
 
