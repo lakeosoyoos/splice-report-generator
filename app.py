@@ -119,21 +119,132 @@ def _stage_uploads(uploaded_files, prefix: str) -> tuple[str, int, list[str]]:
     return tmp, n, warns
 
 
-def _detect_sites(dir_a: str, dir_b: str | None = None) -> tuple[str, str]:
-    """Auto-detect short site codes from folder name or first SOR/JSON
-    filename.  Falls back to ('A', 'B').  Best-effort — no required."""
-    import re
-    candidates: list[str] = []
-    candidates.append(os.path.basename(os.path.normpath(dir_a)).upper())
+def _read_sor_genparams(filepath: str) -> dict:
+    """Pull GenParams metadata (orig_loc, term_loc, ...) from a SOR
+    file.  Ports the proven block-directory walk from
+    unidirectional-one-shot/unidirectional_event_finder.py — the
+    simple find('GenParams\\x00') approach doesn't get the right
+    offset because GenParams block content lives AFTER the Map block
+    based on declared sizes, not at the directory-entry position."""
+    import struct
     try:
-        first = sorted(f for f in os.listdir(dir_a)
-                       if f.lower().endswith((".sor", ".json")))
-        if first:
-            candidates.append(os.path.splitext(first[0])[0].upper())
+        with open(filepath, "rb") as f:
+            data = f.read()
+
+        # Walk the block directory using the Bellcore Map convention
+        name_end = data.index(b"\x00", 0) + 1            # 'Map\x00'
+        map_size = struct.unpack_from("<I", data, name_end + 2)[0]
+        off = name_end + 6 + 2                            # skip num_blocks
+        entries = []
+        while off < map_size:
+            ne = data.index(b"\x00", off) + 1
+            nm = data[off:ne - 1].decode("latin-1")
+            bv = struct.unpack_from("<H", data, ne)[0]
+            bs = struct.unpack_from("<I", data, ne + 2)[0]
+            entries.append((nm, bv, bs))
+            off = ne + 6
+        # Block content offsets accumulate from map_size
+        cur = map_size
+        body = None
+        for nm, _bv, bs in entries:
+            if nm == "GenParams":
+                body = cur + len(nm) + 1
+                break
+            cur += bs
+        if body is None:
+            return {}
+
+        # Walk the GenParams body field-by-field
+        o = body + 2   # skip 2-byte language code
+
+        def pull(o):
+            e = data.index(b"\x00", o)
+            return data[o:e].decode("latin-1", errors="replace").strip(), e + 1
+
+        cable_id,   o = pull(o)
+        fiber_id,   o = pull(o)
+        o += 4   # FiberType (2) + NominalWavelength (2)
+        orig_loc,   o = pull(o)
+        term_loc,   o = pull(o)
+        return {
+            "cable_id": cable_id, "fiber_id": fiber_id,
+            "orig_loc": orig_loc, "term_loc": term_loc,
+        }
     except Exception:
-        pass
-    for c in candidates:
-        m = re.match(r"^([A-Z]{3,4})([A-Z]{3,4})", c)
+        return {}
+
+
+def _read_json_genparams(filepath: str) -> dict:
+    """Same shape as _read_sor_genparams, but for EXFO JSON exports."""
+    try:
+        import json
+        with open(filepath, "r", encoding="utf-8", errors="replace") as f:
+            obj = json.load(f)
+        # JSON formats vary; check a few common nesting points
+        for key_set in (obj, obj.get("GenParams") or {},
+                         obj.get("identification") or {},
+                         obj.get("Identification") or {}):
+            o = (key_set.get("originating_location")
+                 or key_set.get("orig_loc")
+                 or key_set.get("OriginatingLocation"))
+            t = (key_set.get("terminating_location")
+                 or key_set.get("term_loc")
+                 or key_set.get("TerminatingLocation"))
+            if o or t:
+                return {"orig_loc": (o or "").strip(),
+                        "term_loc": (t or "").strip()}
+        return {}
+    except Exception:
+        return {}
+
+
+def _detect_sites(dir_a: str, dir_b: str | None = None) -> tuple[str, str]:
+    """Best-effort detection of site_a / site_b names, in this order:
+      1. orig_loc / term_loc from the first SOR/JSON file's GenParams
+         (gives us full location names like 'MILLER' / 'TOPEKA').
+      2. Filename SITE1+SITE2 pattern (e.g. MILTOP0001 → MIL + TOP).
+      3. Folder-name SITE1+SITE2 pattern.
+    Falls back to ('A','B') if nothing parses."""
+    import re
+
+    # ── 1.  Read GenParams metadata from the first file in dir_a ──
+    try:
+        files_a = sorted(f for f in os.listdir(dir_a)
+                         if f.lower().endswith((".sor", ".json")))
+    except Exception:
+        files_a = []
+    if files_a:
+        path = os.path.join(dir_a, files_a[0])
+        md = (_read_sor_genparams(path) if path.lower().endswith(".sor")
+              else _read_json_genparams(path))
+        orig = (md.get("orig_loc") or "").strip()
+        term = (md.get("term_loc") or "").strip()
+        if orig and term:
+            # Strip stray quoting / whitespace.  Keep original casing
+            # for display unless the value is all-numeric or empty.
+            if not orig.isdigit() and not term.isdigit():
+                return orig, term
+
+    # ── 2 / 3.  Fall back to filename, then folder, regex matching ──
+    filename_candidates: list[str] = []
+    folder_candidates:   list[str] = [
+        os.path.basename(os.path.normpath(dir_a)).upper()
+    ]
+    if files_a:
+        filename_candidates.append(os.path.splitext(files_a[0])[0].upper())
+
+    # Pattern requires the two site codes to be followed by a digit —
+    # this is what every SOR filename in our corpus uses
+    # (MILTOP0001, ELMMIL0541, SANDUR001, ...).
+    strict = re.compile(r"^([A-Z]{3,4})([A-Z]{3,4})(?=\d)")
+    for c in filename_candidates + folder_candidates:
+        m = strict.match(c)
+        if m:
+            return m.group(1), m.group(2)
+    # Lenient fallback (old behaviour) — only when nothing strict matched.
+    lenient = re.compile(r"^([A-Z]{3,4})([A-Z]{3,4})")
+    for c in filename_candidates + folder_candidates:
+        m = lenient.match(c)
         if m:
             return m.group(1), m.group(2)
     return "A", "B"
