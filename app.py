@@ -329,6 +329,16 @@ with st.sidebar:
         )
 
     with st.expander("Launch / tailbox reflectance", expanded=False):
+        spans_have_tailbox = st.checkbox(
+            "Span has tailbox connectors",
+            value=True,
+            help="When ON, the engine checks the far end of each fiber for "
+                 "a healthy tailbox connector and flags missing / dirty "
+                 "ones (BAD_TAILBOX_REFL).  Turn OFF for spans where the "
+                 "cable terminates without a tailbox (e.g. tie-panel "
+                 "shoots, jumper-only spans) — otherwise every fiber's "
+                 "bare-glass end-of-fiber reflection lights up.",
+        )
         bad_refl_db = st.slider(
             "Bad-reflectance threshold (dB)",
             min_value=-60.0, max_value=-30.0,
@@ -342,11 +352,13 @@ with st.sidebar:
             "Tailbox population-outlier margin (dB)",
             min_value=2.0, max_value=25.0,
             value=10.0, step=1.0, format="%.0f",
+            disabled=not spans_have_tailbox,
             help="A fiber's tailbox refl must also be this many dB worse "
                  "than the per-direction population median to flag — "
                  "stops every fiber from lighting up when an entire span "
                  "was shot with the same bare-glass cable end.  Default "
-                 "10 dB.",
+                 "10 dB.  (Ignored when 'Span has tailbox connectors' is "
+                 "off.)",
         )
 
     with st.expander("Per-fiber bend gate", expanded=False):
@@ -515,6 +527,7 @@ if run_clicked:
             launch_issues = detect_launch_issues(
                 fibers_a, fibers_b, first_splice_km,
                 bad_refl_db=THRESHOLDS["LAUNCH_BAD_REFL_DB"],
+                spans_have_tailbox=bool(spans_have_tailbox),
             )
 
         # Span estimate (median of top-quartile EOFs across A fibers)

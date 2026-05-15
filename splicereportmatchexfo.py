@@ -1640,13 +1640,19 @@ def _fiber_launch_info(r):
 
 def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
                           high_loss_db=None, bad_refl_db=None,
+                          spans_have_tailbox=True,
                           **_ignored):
     """Return {fiber_num: launch_issue_dict} for every fiber that has a
     launch-end problem in either direction.
 
     Optional overrides (used by the Streamlit sidebar):
-      high_loss_db  — launch-connector loss >= this flags HIGH_LAUNCH_LOSS
-      bad_refl_db   — launch reflectance > this flags BAD_LAUNCH_REFL
+      high_loss_db        — launch-connector loss >= this flags HIGH_LAUNCH_LOSS
+      bad_refl_db         — launch reflectance >= this flags BAD_LAUNCH_REFL
+      spans_have_tailbox  — when False, the entire BAD_TAILBOX_REFL block
+                            is skipped.  Use for tie-panel / jumper-only
+                            spans where the cable terminates without a
+                            tailbox connector and every fiber's bare-glass
+                            EOL reflection would otherwise flag.
     Any other kwargs are accepted and ignored for forward-compat.
 
     launch_issue_dict has:
@@ -1807,6 +1813,11 @@ def detect_launch_issues(fibers_a, fibers_b, first_splice_km=None,
             #       SANDUR-B, where every fiber has the same bare-glass
             #       1E refl by virtue of how the shoot was done, don't
             #       light up every fiber)
+            # Tie-panel / jumper-only spans set spans_have_tailbox=False
+            # to skip this entire block — they don't have tailbox
+            # connectors and every bare-glass EOL would otherwise flag.
+            if not spans_have_tailbox:
+                return
             this_tb_refl = _fiber_tailbox_refl(r)
             pop_median   = a_tb_median if dir_is_A else b_tb_median
             # Same refl < 0 precondition as the launch check:
