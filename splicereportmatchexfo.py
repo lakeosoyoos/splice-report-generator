@@ -3354,11 +3354,25 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         bottom=Side(style='thin', color='CCCCCC'),
     )
 
-    # ── Row 1: A→B distances (km / ft) ──
-    ws.cell(row=1, column=2, value="A→B:").font = a_km_font
-    ws.cell(row=2, column=2, value="B→A:").font = b_km_font
+    # Each splice column now occupies TWO physical Excel columns: a km
+    # column (left) and a ft column (right).  Headers go side-by-side,
+    # data cells are merged across both so they visually span the pair.
+    #   physical col = 2*si + 3 (km)  |  2*si + 4 (ft)
+    def _km_col(si):
+        return 2 * si + 3
+    def _ft_col(si):
+        return 2 * si + 4
+
+    end_col = 2 * n_splices + 3                # ILA:B column
+
+    # ── Row 1: B→A distances (km column + ft column, separate cells) ──
+    # ── Row 2: A→B distances (km column + ft column, separate cells) ──
+    # Convention swap: B→A on top, A→B on bottom — keeps the lowest-
+    # numbered fiber's "near end" reading at the row directly above the
+    # column header.
+    ws.cell(row=1, column=2, value="B→A:").font = b_km_font
+    ws.cell(row=2, column=2, value="A→B:").font = a_km_font
     for si, sp in enumerate(splices):
-        col = si + 3
         # Steven's convention: the A→B header is the lowest-numbered fiber's
         # event distance, truncated to 10 m.  Falls back to the refined
         # cluster center, then the raw position, if no display value was set
@@ -3370,17 +3384,22 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         # truncated to 10 m so the two headers stay self-consistent.
         b_km = math.floor((span_km - km) * 100) / 100.0
         b_ft = b_km * 3280.84
-        c1 = ws.cell(row=1, column=col, value=f"{km:.2f}km / {ft:,.0f}ft")
-        c1.font = a_km_font
-        c1.alignment = Alignment(horizontal='center')
-        c2 = ws.cell(row=2, column=col, value=f"{b_km:.2f}km / {b_ft:,.0f}ft")
-        c2.font = b_km_font
-        c2.alignment = Alignment(horizontal='center')
-    end_col = n_splices + 3
-    ws.cell(row=1, column=end_col, value=f"{span_km:.2f}km / {span_km*3280.84:,.0f}ft").font = a_km_font
-    ws.cell(row=2, column=end_col, value="0.00km / 0ft").font = b_km_font
+        # Row 1 = B→A
+        c = ws.cell(row=1, column=_km_col(si), value=f"{b_km:.2f}km")
+        c.font = b_km_font; c.alignment = Alignment(horizontal='center')
+        c = ws.cell(row=1, column=_ft_col(si), value=f"{b_ft:,.0f}ft")
+        c.font = b_km_font; c.alignment = Alignment(horizontal='center')
+        # Row 2 = A→B
+        c = ws.cell(row=2, column=_km_col(si), value=f"{km:.2f}km")
+        c.font = a_km_font; c.alignment = Alignment(horizontal='center')
+        c = ws.cell(row=2, column=_ft_col(si), value=f"{ft:,.0f}ft")
+        c.font = a_km_font; c.alignment = Alignment(horizontal='center')
+    # ILA:B end column — keep km / ft combined here (single column, no split)
+    ws.cell(row=1, column=end_col, value="0.00km / 0ft").font = b_km_font
+    ws.cell(row=2, column=end_col,
+             value=f"{span_km:.2f}km / {span_km*3280.84:,.0f}ft").font = a_km_font
 
-    # ── Row 3: Headers ──
+    # ── Row 3: Headers (splice label merged across km+ft pair) ──
     ws.cell(row=3, column=1, value="Ribbon").font = hdr_font
     ws.cell(row=3, column=1).fill = hdr_fill
     ws.cell(row=3, column=2, value=f"ILA:{site_a}").font = hdr_font
@@ -3392,23 +3411,32 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     hdr_fill_bend   = PatternFill(start_color="FFEB3B", end_color="FFEB3B", fill_type="solid")
     hdr_fill_damage = PatternFill(start_color="FF4444", end_color="FF4444", fill_type="solid")
     for si, sp in enumerate(splices):
-        col = si + 3
+        km_c, ft_c = _km_col(si), _ft_col(si)
         kind = sp.get('column_kind', 'splice')
         if kind == 'bend':
             ref_km = sp.get('position_km_refined', sp['position_km'])
             header = f"Bends @ {ref_km:.2f}km"
-            cell = ws.cell(row=3, column=col, value=header)
+            cell = ws.cell(row=3, column=km_c, value=header)
             cell.fill = hdr_fill_bend
+            # paint the ft side of the merged pair with the same fill so
+            # the merged appearance is consistent
+            ws.cell(row=3, column=ft_c).fill = hdr_fill_bend
         elif kind == 'damage':
             ref_km = sp.get('position_km_refined', sp['position_km'])
             header = f"Damage @ {ref_km:.2f}km"
-            cell = ws.cell(row=3, column=col, value=header)
+            cell = ws.cell(row=3, column=km_c, value=header)
             cell.fill = hdr_fill_damage
+            ws.cell(row=3, column=ft_c).fill = hdr_fill_damage
         else:
             disp_n = sp.get('splice_display_num', si + 1)
-            cell = ws.cell(row=3, column=col, value=f"Splice {disp_n}")
+            cell = ws.cell(row=3, column=km_c, value=f"Splice {disp_n}")
             cell.fill = hdr_fill
+            ws.cell(row=3, column=ft_c).fill = hdr_fill
         cell.font = hdr_font
+        cell.alignment = Alignment(horizontal='center', vertical='center')
+        # Merge the splice header across the km + ft pair
+        ws.merge_cells(start_row=3, start_column=km_c,
+                       end_row=3,   end_column=ft_c)
     ws.cell(row=3, column=end_col, value=f"ILA:{site_b}").font = hdr_font
     ws.cell(row=3, column=end_col).fill = hdr_fill
 
@@ -3444,11 +3472,17 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
             ila_b_cell.font = fn
 
         for si in range(n_splices):
-            col = si + 3
+            km_c, ft_c = _km_col(si), _ft_col(si)
             key = (ri, si)
-            cell = ws.cell(row=row, column=col)
+            cell = ws.cell(row=row, column=km_c)
             cell.border = border
-            cell.alignment = Alignment(wrap_text=True, vertical='center')
+            cell.alignment = Alignment(wrap_text=True, vertical='center',
+                                        horizontal='center')
+            # Border on the ft side so the merged appearance is consistent
+            ws.cell(row=row, column=ft_c).border = border
+            # Each data cell spans both km and ft columns
+            ws.merge_cells(start_row=row, start_column=km_c,
+                           end_row=row,   end_column=ft_c)
 
             if key in cells:
                 cd = cells[key]
@@ -3527,9 +3561,11 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     PADDING  = 2.0
     MIN_W    = 6.0
     MAX_W    = 60.0
-    n_cols = 2 + (n_splices + 1)            # col A + col B + splice cols
+    # Total column count: col A (ribbon) + col B (ILA:A) +
+    # (2 * n_splices) splice km/ft pairs + 1 ILA:B
+    n_cols = 2 + 2 * n_splices + 1
+    raw_widths = {}
     for col_idx in range(1, n_cols + 1):
-        col_letter = openpyxl.utils.get_column_letter(col_idx)
         widest = 0
         for row in ws.iter_rows(min_col=col_idx, max_col=col_idx,
                                 values_only=True):
@@ -3537,10 +3573,25 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
             if v is None:
                 continue
             # Take the longest line in case the cell contains '\n'.
-            line_len = max((len(line) for line in str(v).splitlines()), default=0)
+            line_len = max((len(line) for line in str(v).splitlines()),
+                           default=0)
             if line_len > widest:
                 widest = line_len
-        w = max(MIN_W, min(MAX_W, widest * CHAR_W + PADDING))
+        raw_widths[col_idx] = max(MIN_W,
+                                   min(MAX_W, widest * CHAR_W + PADDING))
+    # Equalize each km/ft pair so merged data cells span a balanced
+    # area visually (otherwise the km column gets all the auto-fit
+    # weight because that's where the merged cell stores its value).
+    for si in range(n_splices):
+        km_c, ft_c = _km_col(si), _ft_col(si)
+        w = max(raw_widths.get(km_c, MIN_W), raw_widths.get(ft_c, MIN_W))
+        # Cap pair width: a data cell can be up to MAX_W total spread
+        # across two columns, so cap each column at MAX_W / 2 + slack.
+        w = min(w, MAX_W * 0.55)
+        raw_widths[km_c] = w
+        raw_widths[ft_c] = w
+    for col_idx, w in raw_widths.items():
+        col_letter = openpyxl.utils.get_column_letter(col_idx)
         ws.column_dimensions[col_letter].width = w
 
     # Auto-fit the legend sheet too.
