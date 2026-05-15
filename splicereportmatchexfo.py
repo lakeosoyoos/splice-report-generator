@@ -2024,19 +2024,35 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                     if b_evt is not None:
                         b_loss_val = abs(b_evt['splice_loss'])
                         if b_loss_val >= threshold:
+                            # Two-tier estimated bidir gate, matching the
+                            # legend description.  EXFO's convention when
+                            # only one direction sees the splice: assume
+                            # the unseen side reads 0 dB and estimate
+                            # bidir as B/2.  est_bidir_flagged=True ⇒
+                            # purple (escalated); False ⇒ lavender
+                            # (display only, conservative).
+                            est_bidir = round(b_loss_val / 2.0, 4)
+                            est_bidir_flagged = est_bidir >= threshold
                             loss_str = f"{b_loss_val:.3f}"
                             if loss_str.startswith('0.'): loss_str = loss_str[1:]
+                            est_str = f"{est_bidir:.3f}"
+                            if est_str.startswith('0.'): est_str = est_str[1:]
+                            warn = '⚠' if est_bidir_flagged else '~'
+                            label = (f"{fnum} {loss_str}(B-fill) "
+                                     f"{warn}{est_str}bd")
                             results[(fnum, si)] = {
                                 'fiber': fnum, 'splice_idx': si,
                                 'bidir_loss': b_loss_val, 'a_loss': None,
                                 'b_loss': b_evt['splice_loss'],
                                 'bidir_dist': mirror_anchor - b_evt['dist_km'],
+                                'est_bidir': est_bidir,
+                                'est_bidir_flagged': est_bidir_flagged,
                                 'is_break': False, 'is_broke': False, 'is_bend': False,
                                 'is_bfill': True, 'is_dead_zone': False,
                                 'is_a_only': False, 'is_b_only': False,
                                 'is_flagged': True, 'event_source': 'bfill',
                                 'event_type': b_evt['type'],
-                                'label': f"{fnum} {loss_str} (B)",
+                                'label': label,
                             }
                     elif (_dead_zone is not None and
                           _dead_zone[0] < sp_km < _dead_zone[1]):
@@ -3063,17 +3079,24 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
             if key in seen_keys or key in new_results:
                 continue
 
-            loss_str = _format_loss(b_loss)
+            b_loss_abs = abs(b_loss)
+            est_bidir = round(b_loss_abs / 2.0, 4)
+            est_bidir_flagged = est_bidir >= threshold
+            loss_str = _format_loss(b_loss_abs)
+            est_str  = _format_loss(est_bidir)
+            warn = '⚠' if est_bidir_flagged else '~'
             new_results[key] = {
                 'fiber': fnum, 'splice_idx': nearest_si,
-                'bidir_loss': abs(b_loss), 'a_loss': None,
+                'bidir_loss': b_loss_abs, 'a_loss': None,
                 'b_loss': b_loss, 'bidir_dist': a_frame,
+                'est_bidir': est_bidir,
+                'est_bidir_flagged': est_bidir_flagged,
                 'is_break': False, 'is_broke': False, 'is_bend': False,
                 'is_bfill': True,
                 'is_a_only': False, 'is_b_only': False,
                 'is_flagged': True, 'event_source': 'bfill',
                 'event_type': e['type'],
-                'label': f"{fnum} {loss_str} (B-fill)",
+                'label': f"{fnum} {loss_str}(B-fill) {warn}{est_str}bd",
             }
 
     return new_results
@@ -3321,8 +3344,13 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
     # and reflecting" from "fiber's gone".
     ref_fill    = PatternFill(start_color="E64A19", end_color="E64A19", fill_type="solid")   # deep orange-red
     ref_font    = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
-    bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")   # B-fill past break
+    # Two-tier B-fill (parallel to A-only / B-only):
+    #   bfill_fill / bfill_font  → est bidir (B/2) < threshold (light blue, conservative)
+    #   bfill_fill2 / bfill_font2 → est bidir (B/2) ≥ threshold (deep blue, escalated)
+    bfill_fill  = PatternFill(start_color="BDD7EE", end_color="BDD7EE", fill_type="solid")
     bfill_font  = Font(name=FONT_NAME, size=FSIZE, color="1F4E79")
+    bfill_fill2 = PatternFill(start_color="4A90D9", end_color="4A90D9", fill_type="solid")
+    bfill_font2 = Font(name=FONT_NAME, bold=True, size=FSIZE, color="FFFFFF")
     dz_fill     = PatternFill(start_color="BFBFBF", end_color="BFBFBF", fill_type="solid")   # dead zone (gray)
     dz_font     = Font(name=FONT_NAME, size=FSIZE, italic=True, color="3F3F3F")
     gainer_fill = PatternFill(start_color="A5D6A7", end_color="A5D6A7", fill_type="solid")   # field gainer (mint green)
@@ -3511,8 +3539,12 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
                     cell.fill = bend_fill
                     cell.font = bend_font
                 elif cd.get('is_bfill'):
-                    cell.fill = bfill_fill
-                    cell.font = bfill_font
+                    if cd.get('est_bidir_flagged'):
+                        cell.fill = bfill_fill2
+                        cell.font = bfill_font2
+                    else:
+                        cell.fill = bfill_fill
+                        cell.font = bfill_font
                 elif cd.get('is_dead_zone'):
                     cell.fill = dz_fill
                     cell.font = dz_font
@@ -3546,7 +3578,8 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Red",        "FF4444", "FFFFFF", "Break — 1F reflective event (clean cut, glass-to-air Fresnel reflection). label: 'BREAK'"),
         ("Red (broke)","FF4444", "FFFFFF", "Broke — fiber trace terminates mid-span (crush / stress fracture).  Rendered with the same red fill as a break; label reads 'broke' or 'BREAK' depending on reflective vs non-reflective signature."),
         ("Deep Orange","E64A19", "FFFFFF", "REF — in-line reflective event (connector / mechanical splice / angled cleave).  Reflective + Fresnel but trace continues past it. label: 'F# ref .xxx (refl -XX dB)'"),
-        ("Blue",       "BDD7EE", "1F4E79", "B-fill — B-direction loss used past a break where A-direction is blind. label: '(B-fill)'"),
+        ("Lt. Blue",   "BDD7EE", "1F4E79", "B-fill, est bidir OK — B-direction loss used past a break where A-direction is blind, but the conservative bidir estimate (B/2) is below threshold. label: 'F# .xxx(B-fill) ~.xxxbd'"),
+        ("Deep Blue",  "4A90D9", "FFFFFF", "B-fill, est bidir HIGH — B-direction loss past a break AND the (B/2) estimated bidir still meets/exceeds the reburn threshold.  Worth a re-splice. label: 'F# .xxx(B-fill) ⚠.xxxbd'"),
         ("Gray",       "BFBFBF", "3F3F3F", "Dead zone — fiber broke on A side AND B trace also ends before reaching the A-break. Neither trace could see this splice for this fiber. Broke cell shows 'F# broke@XXk | DZ lo-hi k'; affected columns show 'F# DZ'."),
         ("Lt. Yellow", "FFF2CC", "7F6000", "A-only, est bidir OK — A saw it, no B entry. Estimated bidir (A/2) is below threshold. label: 'F# .xxx(A) ~.xxxbd'"),
         ("Coral",      "FF7043", "FFFFFF", "A-only, est bidir HIGH — A saw it, no B entry. Estimated bidir (A/2) still exceeds threshold. label: 'F# .xxx(A) ⚠.xxxbd'"),
