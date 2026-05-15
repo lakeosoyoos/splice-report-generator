@@ -3207,7 +3207,17 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                 loss = g['loss']
                 loss_str = f"{loss:.3f}" if loss is not None else "?"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str} (B-fill)")
+                # Two-tier B-fill: include the (B/2) estimated bidir
+                # annotation so the cell text matches the legend.
+                est_bd = g['res'].get('est_bidir') if 'res' in g else None
+                est_flagged = g['res'].get('est_bidir_flagged') if 'res' in g else False
+                if est_bd is not None:
+                    bd_str = f"{est_bd:.3f}"
+                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
+                    warn = '⚠' if est_flagged else '~'
+                    parts.append(f"{fib_str} {loss_str}(B-fill) {warn}{bd_str}bd")
+                else:
+                    parts.append(f"{fib_str} {loss_str} (B-fill)")
             else:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
@@ -3236,9 +3246,12 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
         is_b_only = (any(g.get('is_b_only', False) for g in groups) and
                      not is_break and not is_broke and not is_bfill and not has_standard_reburn)
 
-        # If estimated bidir still clears threshold, use a stronger shade
+        # If estimated bidir still clears threshold, use a stronger shade.
+        # Same rule applies to A-only / B-only / B-fill — all three use the
+        # (single-dir / 2) ≥ threshold check to escalate to their darker tier.
         est_bidir_flagged = any(g['res'].get('est_bidir_flagged', False) for g in groups
-                                if g.get('is_a_only') or g.get('is_b_only'))
+                                if g.get('is_a_only') or g.get('is_b_only')
+                                   or g.get('is_bfill'))
 
         max_loss = max((g['loss'] for g in groups if g['loss'] is not None), default=0)
 
