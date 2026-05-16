@@ -328,12 +328,12 @@ if st.session_state.show_settings:
             min_value=25, max_value=500,
             value=int(engine.CLOSURE_MATCH_KM * 1000), step=25,
             help="An event within this distance of a validated splice "
-                 "center renders in the splice column; beyond it → its "
-                 "own bend / ref / damage column.  Default 75 m (was "
-                 "150 m before the 5/15/26 tightening — sensitivity sweep "
-                 "across the test corpus showed 75 m is the tight floor "
-                 "before Vernon-SLC's per-fiber drift starts spawning "
-                 "false bend columns).",
+                 "center renders in the splice column; beyond it gets "
+                 "its own bend / ref / damage column at the actual "
+                 "event km.  Default 75 m — tight enough to catch "
+                 "off-splice events that sit a few hundred metres from "
+                 "the splice, loose enough to absorb the normal per-"
+                 "fiber length-drift seen at every closure.",
         )
         position_tol_km = st.slider(
             "A↔B event-match tolerance (km)",
