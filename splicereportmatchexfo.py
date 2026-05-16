@@ -143,7 +143,13 @@ GREY_LSA_INNER_M = 60      # m — inner dead zone on each side of splice
 # trace blind past it.
 #
 BEND_THRESHOLD        = 0.090   # dB — minimum loss to call an event a "bend"
-CLOSURE_MATCH_KM      = 0.150   # km — tight window; farther → classify as bend
+CLOSURE_MATCH_KM      = 0.075   # km — tight window; farther → classify as bend
+                                #     (75 m default — was 0.150; sensitivity
+                                #     sweep across the test corpus showed the
+                                #     cliff at 60-75 m where Vernon-SLC's
+                                #     per-fiber drift starts spawning false
+                                #     bend columns.  75 m is the tight floor;
+                                #     slider lets techs go tighter per-span.)
 # ── Bend asymmetry gate (April 27 revision) ───────────────────────────────
 # A real macrobend at the closure is typically ASYMMETRIC in bidirectional
 # OTDR — most of the loss shows up in one direction's trace and the other
