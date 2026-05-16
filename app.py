@@ -269,6 +269,35 @@ def _restore_overrides(saved: dict) -> None:
 #  Sidebar — Settings
 # ─────────────────────────────────────────────────────────────────────────────
 with st.sidebar:
+    # Tucked-away advanced settings — sidebar is clean by default, sliders
+    # appear only after the user clicks 'Advanced settings'.
+    if "show_settings" not in st.session_state:
+        st.session_state.show_settings = False
+    btn_label = ("⚙  Hide advanced settings" if st.session_state.show_settings
+                 else "⚙  Advanced settings")
+    if st.button(btn_label, use_container_width=True):
+        st.session_state.show_settings = not st.session_state.show_settings
+        st.rerun()
+
+    # Defaults always come from the engine module — used both when the
+    # settings panel is hidden and as the initial value of every slider.
+    ribbon_size         = int(engine.RIBBON_SIZE)
+    reburn_thr          = float(engine.REBURN_THRESHOLD)
+    bend_thr            = float(engine.BEND_THRESHOLD)
+    closure_match_m     = int(engine.CLOSURE_MATCH_KM * 1000)
+    position_tol_km     = float(engine.POSITION_TOL)
+    min_pop_fraction    = int(round(engine.MIN_POP_FRACTION * 100))
+    launch_fiber_max_km = float(engine.LAUNCH_FIBER_MAX)
+    end_region_km       = float(engine.END_REGION_KM)
+    spans_have_tailbox  = True
+    bad_refl_db         = float(engine.LAUNCH_BAD_REFL_DB)
+    tailbox_outlier_db  = 10.0
+    bend_res_splice_m   = int(engine.BEND_RES_SPLICE_M)
+    bend_res_bend_m     = int(engine.BEND_RES_BEND_M)
+    bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
+
+if st.session_state.show_settings:
+  with st.sidebar:
     st.header("Settings")
 
     ribbon_size = st.number_input(
