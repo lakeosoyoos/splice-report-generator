@@ -269,6 +269,37 @@ def _restore_overrides(saved: dict) -> None:
 # ─────────────────────────────────────────────────────────────────────────────
 #  Sidebar — Settings
 # ─────────────────────────────────────────────────────────────────────────────
+#  OTDR settings panel — matches the EXFO threshold-table layout
+#  (Description / Apply / Fail / Warning columns).  Only the rows we
+#  have engine code for actually do anything when their Apply checkbox
+#  is ticked — see SUPPORTED below.
+OTDR_ROWS = [
+    # (key,                       label,                       fail_default,  unit,    supported)
+    ("unidir_splice_loss",        "Unidir. splice loss",        0.250,        "dB",    True),
+    ("bidir_splice_loss",         "Bidir splice loss",          0.160,        "dB",    True),
+    ("unidir_connector_loss",     "Unidir. connector loss",     0.750,        "dB",    False),
+    ("bidir_connector_loss",      "Bidir connector loss",       0.750,        "dB",    False),
+    ("splitter_loss",             "Splitter Loss",              4.500,        "dB",    False),
+    ("reflectance",               "Reflectance",                -49.9,        "dB",    True),
+    ("fiber_section_atten",       "Fiber section attenuation",  0.400,        "dB/km", False),
+    ("span_loss",                 "Span loss",                  20.000,       "dB",    False),
+    ("span_length",               "Span length",                0.0000,       "km",    False),
+    ("span_orl",                  "Span ORL",                   15.00,        "dB",    False),
+]
+# Pre-checked rows (match what splice report flags out of the box):
+OTDR_DEFAULT_APPLY = {"unidir_splice_loss", "bidir_splice_loss", "reflectance"}
+
+# Initialise persisted settings on first run
+if "otdr_settings" not in st.session_state:
+    st.session_state.otdr_settings = {
+        key: {
+            "apply":   key in OTDR_DEFAULT_APPLY,
+            "fail":    fail,
+            "warning": fail,        # Warning column captured visually; engine uses Fail only
+        }
+        for key, _, fail, _, _ in OTDR_ROWS
+    }
+
 with st.sidebar:
     # Tucked-away advanced settings — sidebar is clean by default, sliders
     # appear only after the user clicks 'Advanced settings'.
@@ -278,6 +309,15 @@ with st.sidebar:
                  else "⚙  Advanced settings")
     if st.button(btn_label, use_container_width=True):
         st.session_state.show_settings = not st.session_state.show_settings
+        st.rerun()
+
+    # OTDR settings button (EXFO-style threshold table)
+    if "show_otdr" not in st.session_state:
+        st.session_state.show_otdr = False
+    otdr_btn_label = ("Hide OTDR settings" if st.session_state.show_otdr
+                       else "OTDR settings")
+    if st.button(otdr_btn_label, use_container_width=True):
+        st.session_state.show_otdr = not st.session_state.show_otdr
         st.rerun()
 
     # Defaults always come from the engine module — used both when the
@@ -298,6 +338,61 @@ with st.sidebar:
     bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
     single_dir_thr      = float(engine.SINGLE_DIR_THRESHOLD)
 
+if st.session_state.show_otdr:
+  with st.sidebar:
+    st.header("OTDR settings")
+    st.caption(
+        "Tick **Apply** on a row to override that threshold with the "
+        "value you type in **Fail**.  Unticked rows fall back to the "
+        "engine default.  Warning column is shown for parity with EXFO "
+        "but currently unused (engine uses Fail only).  Rows marked "
+        "_(not yet wired)_ are visual placeholders — their Apply "
+        "checkbox has no effect on the report yet."
+    )
+    # Header row
+    h = st.columns([4, 1, 2, 2])
+    h[0].markdown("**Description**")
+    h[1].markdown("**Apply**")
+    h[2].markdown("**Fail**")
+    h[3].markdown("**Warning**")
+    # Render each row.  Widget keys are namespaced so they don't collide
+    # with any other Streamlit widget.
+    for key, label, default_fail, unit, supported in OTDR_ROWS:
+        cur = st.session_state.otdr_settings[key]
+        row = st.columns([4, 1, 2, 2])
+        suffix = "" if supported else "  _(not yet wired)_"
+        row[0].markdown(f"{label}{suffix}")
+        new_apply = row[1].checkbox(
+            "apply", value=cur["apply"], key=f"otdr_apply_{key}",
+            label_visibility="collapsed",
+        )
+        new_fail = row[2].number_input(
+            "fail", value=float(cur["fail"]),
+            step=0.001 if unit == "dB" else 0.01,
+            format="%.3f", disabled=not new_apply,
+            key=f"otdr_fail_{key}",
+            label_visibility="collapsed",
+        )
+        new_warning = row[3].number_input(
+            "warn", value=float(cur["warning"]),
+            step=0.001 if unit == "dB" else 0.01,
+            format="%.3f", disabled=not new_apply,
+            key=f"otdr_warn_{key}",
+            label_visibility="collapsed",
+        )
+        # Stash unit next to value so we can label correctly later
+        cur_unit = unit
+    # Apply button — commits everything in the form to the settings dict
+    if st.button("Apply settings", use_container_width=True,
+                  type="primary"):
+        for key, _, _, _, _ in OTDR_ROWS:
+            st.session_state.otdr_settings[key] = {
+                "apply":   st.session_state[f"otdr_apply_{key}"],
+                "fail":    st.session_state[f"otdr_fail_{key}"],
+                "warning": st.session_state[f"otdr_warn_{key}"],
+            }
+        st.success("Settings applied to next report run.")
+
 if st.session_state.show_settings:
   with st.sidebar:
     st.header("Settings")
@@ -310,24 +405,11 @@ if st.session_state.show_settings:
     )
 
     st.divider()
+    st.caption(
+        "Reburn / single-direction / bad-reflectance thresholds are now "
+        "controlled by the **OTDR settings** panel above."
+    )
     with st.expander("Detection thresholds", expanded=True):
-        reburn_thr = st.slider(
-            "Reburn threshold — bidir loss to flag (dB)",
-            min_value=0.050, max_value=0.500,
-            value=float(engine.REBURN_THRESHOLD), step=0.005, format="%.3f",
-            help="The bidirectional-average splice loss at or above which "
-                 "a splice is flagged for reburn.  Default 0.160 dB.",
-        )
-        single_dir_thr = st.slider(
-            "Single-direction threshold — A-only / B-only / B-fill (dB)",
-            min_value=0.100, max_value=0.800,
-            value=float(engine.SINGLE_DIR_THRESHOLD), step=0.010, format="%.3f",
-            help="The raw single-direction loss at or above which an "
-                 "A-only, B-only, or B-fill cell flags.  No averaging — "
-                 "we don't divide by 2 to estimate bidir.  Stricter than "
-                 "the bidir threshold because the unseen side can't "
-                 "confirm.  Default 0.250 dB.",
-        )
         bend_thr = st.slider(
             "Bend threshold — minimum loss to call a bend (dB)",
             min_value=0.020, max_value=0.300,
@@ -397,15 +479,6 @@ if st.session_state.show_settings:
                  "shoots, jumper-only spans) — otherwise every fiber's "
                  "bare-glass end-of-fiber reflection lights up.",
         )
-        bad_refl_db = st.slider(
-            "Bad-reflectance threshold (dB)",
-            min_value=-60.0, max_value=-30.0,
-            value=float(engine.LAUNCH_BAD_REFL_DB), step=0.1, format="%.1f",
-            help="A launch or tailbox connector whose reflectance is at or "
-                 "above this value (closer to zero) flags as bad.  Default "
-                 "−49.9 dB.  Healthy buried connectors reflect −50 to "
-                 "−55 dB.",
-        )
         tailbox_outlier_db = st.slider(
             "Tailbox population-outlier margin (dB)",
             min_value=2.0, max_value=25.0,
@@ -453,6 +526,20 @@ if st.session_state.show_settings:
         "reload.  Defaults match the tech-reference report tuning."
     )
 
+
+# OTDR settings overrides — when a row's Apply checkbox is ticked,
+# the Fail value overrides the engine default for that threshold.
+# Unticked rows fall back to the engine value.
+otdr = st.session_state.get("otdr_settings", {})
+def _otdr_override(key, engine_default):
+    row = otdr.get(key) or {}
+    if row.get("apply") and row.get("fail") is not None:
+        return float(row["fail"])
+    return engine_default
+
+reburn_thr     = _otdr_override("bidir_splice_loss",  float(engine.REBURN_THRESHOLD))
+single_dir_thr = _otdr_override("unidir_splice_loss", float(engine.SINGLE_DIR_THRESHOLD))
+bad_refl_db    = _otdr_override("reflectance",        float(engine.LAUNCH_BAD_REFL_DB))
 
 # Build the overrides dict in one place — what gets pushed onto the engine
 # module before each run.
