@@ -1524,8 +1524,15 @@ def split_offsplice_events_into_own_columns(all_results, splices,
         # at km 32.15, 700 m before Splice 7) get their own column at
         # their actual km position instead of being anchored to the
         # nearest splice.  Same rule for bend / break / broke.
+        # Also include is_a_only / is_b_only — single-direction cells
+        # that sit > CLOSURE_MATCH_KM from their assigned splice get
+        # relocated into the off-splice cluster too (e.g. F859 at
+        # km 60.337 with 9.315 dB single-direction loss, 240 m from
+        # Splice 8 at km 60.58, should sit in the Damage @ 60.34 km
+        # column with F857 — not in Splice 8).
         if not (r.get('is_bend') or r.get('is_break') or
-                r.get('is_broke') or r.get('is_ref')):
+                r.get('is_broke') or r.get('is_ref') or
+                r.get('is_a_only') or r.get('is_b_only')):
             continue
         km = r.get('bidir_dist')
         if km is None:
