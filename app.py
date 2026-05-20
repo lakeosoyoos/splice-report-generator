@@ -29,6 +29,7 @@ from splicereportmatchexfo import (
     apply_field_gainer_rule,
     build_ribbon_data, write_xlsx,
     split_offsplice_events_into_own_columns,
+    _normalize_untrimmed_events,
 )
 
 
@@ -564,6 +565,19 @@ if run_clicked:
             prog.empty()
             st.stop()
         n_fibers = max(fibers_a.keys())
+
+        # Pass-0: normalize untrimmed SOR shoots.  For SORs where the tech
+        # didn't set start/stop, events[0] is the OTDR port at km 0 and
+        # events[1] is the launch connector at km ~1.0.  Without this
+        # normalize, the launch event leaks through as a "splice candidate"
+        # at km 1 and gets reported as a bend column on every fiber.  Save
+        # the original events on r['_raw_events'] so detect_launch_issues
+        # can still find the actual tailbox 1F event (normalize strips it).
+        prog.progress(0.30, text="Normalizing untrimmed SOR events...")
+        with redirect_stdout(log_buf):
+            for r in list(fibers_a.values()) + list(fibers_b.values()):
+                r["_raw_events"] = r["events"]
+                r["events"] = _normalize_untrimmed_events(r["events"])
 
         prog.progress(0.35, text="Discovering splice closures...")
         with redirect_stdout(log_buf):
