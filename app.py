@@ -295,6 +295,7 @@ with st.sidebar:
     bend_res_splice_m   = int(engine.BEND_RES_SPLICE_M)
     bend_res_bend_m     = int(engine.BEND_RES_BEND_M)
     bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
+    single_dir_thr      = float(engine.SINGLE_DIR_THRESHOLD)
 
 if st.session_state.show_settings:
   with st.sidebar:
@@ -315,6 +316,16 @@ if st.session_state.show_settings:
             value=float(engine.REBURN_THRESHOLD), step=0.005, format="%.3f",
             help="The bidirectional-average splice loss at or above which "
                  "a splice is flagged for reburn.  Default 0.160 dB.",
+        )
+        single_dir_thr = st.slider(
+            "Single-direction threshold — A-only / B-only / B-fill (dB)",
+            min_value=0.100, max_value=0.800,
+            value=float(engine.SINGLE_DIR_THRESHOLD), step=0.010, format="%.3f",
+            help="The raw single-direction loss at or above which an "
+                 "A-only, B-only, or B-fill cell flags.  No averaging — "
+                 "we don't divide by 2 to estimate bidir.  Stricter than "
+                 "the bidir threshold because the unseen side can't "
+                 "confirm.  Default 0.250 dB.",
         )
         bend_thr = st.slider(
             "Bend threshold — minimum loss to call a bend (dB)",
@@ -445,17 +456,18 @@ if st.session_state.show_settings:
 # Build the overrides dict in one place — what gets pushed onto the engine
 # module before each run.
 THRESHOLDS = {
-    "REBURN_THRESHOLD":   float(reburn_thr),
-    "BEND_THRESHOLD":     float(bend_thr),
-    "CLOSURE_MATCH_KM":   float(closure_match_m) / 1000.0,
-    "POSITION_TOL":       float(position_tol_km),
-    "MIN_POP_FRACTION":   float(min_pop_fraction) / 100.0,
-    "LAUNCH_FIBER_MAX":   float(launch_fiber_max_km),
-    "END_REGION_KM":      float(end_region_km),
-    "LAUNCH_BAD_REFL_DB": float(bad_refl_db),
-    "BEND_RES_SPLICE_M":  int(bend_res_splice_m),
-    "BEND_RES_BEND_M":    int(bend_res_bend_m),
-    "BEND_NARROW_LOSS_DB": float(bend_narrow_loss_db),
+    "REBURN_THRESHOLD":     float(reburn_thr),
+    "SINGLE_DIR_THRESHOLD": float(single_dir_thr),
+    "BEND_THRESHOLD":       float(bend_thr),
+    "CLOSURE_MATCH_KM":     float(closure_match_m) / 1000.0,
+    "POSITION_TOL":         float(position_tol_km),
+    "MIN_POP_FRACTION":     float(min_pop_fraction) / 100.0,
+    "LAUNCH_FIBER_MAX":     float(launch_fiber_max_km),
+    "END_REGION_KM":        float(end_region_km),
+    "LAUNCH_BAD_REFL_DB":   float(bad_refl_db),
+    "BEND_RES_SPLICE_M":    int(bend_res_splice_m),
+    "BEND_RES_BEND_M":      int(bend_res_bend_m),
+    "BEND_NARROW_LOSS_DB":  float(bend_narrow_loss_db),
 }
 # TAILBOX_OUTLIER_DB is a local in detect_launch_issues — it's not a module
 # constant — so we pass it through via a dedicated kwarg below.  Stash it

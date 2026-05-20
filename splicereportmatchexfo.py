@@ -111,7 +111,13 @@ from json_reader import (
 #  DEFAULTS
 # ═══════════════════════════════════════════════════════════════════════
 
-REBURN_THRESHOLD = 0.160   # dB — flag anything at or above
+REBURN_THRESHOLD = 0.160   # dB — flag bidirectional reburns at or above
+SINGLE_DIR_THRESHOLD = 0.250  # dB — single-direction-only events (A-only,
+                              #     B-only, B-fill past A-break) need a
+                              #     stricter threshold because the unseen
+                              #     side can't confirm.  No averaging /
+                              #     halving — the raw single-direction
+                              #     loss must clear this on its own.
 NOMINAL_SPLICE   = 0.159   # dB expected per splice
 RIBBON_SIZE      = 12      # fibers per ribbon
 POSITION_TOL     = 1.5     # km tolerance for matching A↔B events
@@ -2060,30 +2066,20 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                                 b_evt = e
                     if b_evt is not None:
                         b_loss_val = abs(b_evt['splice_loss'])
-                        if b_loss_val >= threshold:
-                            # Two-tier estimated bidir gate, matching the
-                            # legend description.  EXFO's convention when
-                            # only one direction sees the splice: assume
-                            # the unseen side reads 0 dB and estimate
-                            # bidir as B/2.  est_bidir_flagged=True ⇒
-                            # purple (escalated); False ⇒ lavender
-                            # (display only, conservative).
-                            est_bidir = round(b_loss_val / 2.0, 4)
-                            est_bidir_flagged = est_bidir >= threshold
+                        # Single-direction rule: no averaging, no /2 estimate.
+                        # The raw B-fill loss must clear SINGLE_DIR_THRESHOLD
+                        # on its own (default 0.250 dB) — stricter than the
+                        # bidir threshold because we have no opposite-side
+                        # confirmation.
+                        if b_loss_val >= SINGLE_DIR_THRESHOLD:
                             loss_str = f"{b_loss_val:.3f}"
                             if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                            est_str = f"{est_bidir:.3f}"
-                            if est_str.startswith('0.'): est_str = est_str[1:]
-                            warn = '⚠' if est_bidir_flagged else '~'
-                            label = (f"{fnum} {loss_str}(B-fill) "
-                                     f"{warn}{est_str}bd")
+                            label = f"{fnum} {loss_str} (B-fill)"
                             results[(fnum, si)] = {
                                 'fiber': fnum, 'splice_idx': si,
                                 'bidir_loss': b_loss_val, 'a_loss': None,
                                 'b_loss': b_evt['splice_loss'],
                                 'bidir_dist': mirror_anchor - b_evt['dist_km'],
-                                'est_bidir': est_bidir,
-                                'est_bidir_flagged': est_bidir_flagged,
                                 'is_break': False, 'is_broke': False, 'is_bend': False,
                                 'is_bfill': True, 'is_dead_zone': False,
                                 'is_a_only': False, 'is_b_only': False,
@@ -2214,8 +2210,11 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                     continue
 
                 # No JSON trace available — fall back to conservative (A alone) check:
-                # flag as A-only if the single-direction loss alone clears threshold
-                if a_loss_abs >= threshold:
+                # A-only single-direction needs the stricter SINGLE_DIR_THRESHOLD
+                # (default 0.250 dB).  No averaging.  The raw A loss alone must
+                # clear it — the unseen B side can't confirm a single-direction
+                # reburn.
+                if a_loss_abs >= SINGLE_DIR_THRESHOLD:
                     loss_str = _format_loss(a_loss_abs)
                     closure_center_km = _closure_km_for_fiber(sp, fnum)
                     bend_ref_km = (_per_fiber_splice_km(r['events'], closure_center_km)
@@ -2517,9 +2516,11 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
                     }
                     continue
 
-                # No JSON trace — fall back to single-direction check (B alone
-                # ≥ threshold, which is conservative but honest)
-                if b_loss_abs >= threshold:
+                # No JSON trace — fall back to single-direction check.
+                # B-only needs the stricter SINGLE_DIR_THRESHOLD (default
+                # 0.250 dB).  No averaging — the raw B loss must clear it
+                # on its own.
+                if b_loss_abs >= SINGLE_DIR_THRESHOLD:
                     is_bend = _is_bend_event(a_frame_km, bend_ref_km, b_loss_signed,
                                               fiber_events=ra_events,
                                               closure_kms=closure_kms_all,
@@ -3103,7 +3104,10 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
             if a_frame <= brk_km + 0.2:   # 200m buffer past the break
                 continue
             b_loss = e.get('splice_loss') or 0.0
-            if abs(b_loss) < threshold:
+            # Single-direction B-fill: stricter gate (0.250 default), no
+            # averaging or /2 estimate.  The raw B loss alone must clear
+            # SINGLE_DIR_THRESHOLD — no opposite-side confirmation possible.
+            if abs(b_loss) < SINGLE_DIR_THRESHOLD:
                 continue
 
             # Find nearest splice position (A-frame)
@@ -3125,23 +3129,17 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
                 continue
 
             b_loss_abs = abs(b_loss)
-            est_bidir = round(b_loss_abs / 2.0, 4)
-            est_bidir_flagged = est_bidir >= threshold
             loss_str = _format_loss(b_loss_abs)
-            est_str  = _format_loss(est_bidir)
-            warn = '⚠' if est_bidir_flagged else '~'
             new_results[key] = {
                 'fiber': fnum, 'splice_idx': nearest_si,
                 'bidir_loss': b_loss_abs, 'a_loss': None,
                 'b_loss': b_loss, 'bidir_dist': a_frame,
-                'est_bidir': est_bidir,
-                'est_bidir_flagged': est_bidir_flagged,
                 'is_break': False, 'is_broke': False, 'is_bend': False,
                 'is_bfill': True,
                 'is_a_only': False, 'is_b_only': False,
                 'is_flagged': True, 'event_source': 'bfill',
                 'event_type': e['type'],
-                'label': f"{fnum} {loss_str}(B-fill) {warn}{est_str}bd",
+                'label': f"{fnum} {loss_str} (B-fill)",
             }
 
     return new_results
@@ -3225,44 +3223,24 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                 loss_abs = abs(raw_loss) if raw_loss is not None else 0
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                # Show estimated bidir value (like Steven's "bidi .173" annotation)
-                est_bd = g['res'].get('est_bidir')
-                if est_bd is not None:
-                    bd_str = f"{est_bd:.3f}"
-                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
-                    parts.append(f"{fib_str} {loss_str} (A) bidi {bd_str}")
-                else:
-                    parts.append(f"{fib_str} {loss_str} (A)")
+                # Single-direction display: raw A loss, no /2 bidir estimate.
+                # Threshold (SINGLE_DIR_THRESHOLD, default 0.250) was already
+                # gated upstream — anything in this branch cleared 0.250 dB
+                # on its own.
+                parts.append(f"{fib_str} {loss_str} (A)")
             elif g['is_b_only']:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 raw_loss = g['res']['b_loss']
                 loss_abs = abs(raw_loss) if raw_loss is not None else 0
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                # Show estimated bidir value
-                est_bd = g['res'].get('est_bidir')
-                if est_bd is not None:
-                    bd_str = f"{est_bd:.3f}"
-                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
-                    parts.append(f"{fib_str} {loss_str} (B) bidi {bd_str}")
-                else:
-                    parts.append(f"{fib_str} {loss_str} (B)")
+                parts.append(f"{fib_str} {loss_str} (B)")
             elif g.get('is_bfill'):
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
                 loss_str = f"{loss:.3f}" if loss is not None else "?"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                # Two-tier B-fill: include the (B/2) estimated bidir
-                # annotation so the cell text matches the legend.
-                est_bd = g['res'].get('est_bidir') if 'res' in g else None
-                est_flagged = g['res'].get('est_bidir_flagged') if 'res' in g else False
-                if est_bd is not None:
-                    bd_str = f"{est_bd:.3f}"
-                    if bd_str.startswith('0.'): bd_str = bd_str[1:]
-                    warn = '⚠' if est_flagged else '~'
-                    parts.append(f"{fib_str} {loss_str}(B-fill) {warn}{bd_str}bd")
-                else:
-                    parts.append(f"{fib_str} {loss_str} (B-fill)")
+                parts.append(f"{fib_str} {loss_str} (B-fill)")
             else:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
@@ -3644,13 +3622,10 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
         ("Red",        "FF4444", "FFFFFF", "Break — 1F reflective event (clean cut, glass-to-air Fresnel reflection). label: 'BREAK'"),
         ("Red (broke)","FF4444", "FFFFFF", "Broke — fiber trace terminates mid-span (crush / stress fracture).  Rendered with the same red fill as a break; label reads 'broke' or 'BREAK' depending on reflective vs non-reflective signature."),
         ("Deep Orange","E64A19", "FFFFFF", "REF — in-line reflective event (connector / mechanical splice / angled cleave).  Reflective + Fresnel but trace continues past it. label: 'F# ref .xxx (refl -XX dB)'"),
-        ("Lt. Blue",   "BDD7EE", "1F4E79", "B-fill, est bidir OK — B-direction loss used past a break where A-direction is blind, but the conservative bidir estimate (B/2) is below threshold. label: 'F# .xxx(B-fill) ~.xxxbd'"),
-        ("Deep Blue",  "4A90D9", "FFFFFF", "B-fill, est bidir HIGH — B-direction loss past a break AND the (B/2) estimated bidir still meets/exceeds the reburn threshold.  Worth a re-splice. label: 'F# .xxx(B-fill) ⚠.xxxbd'"),
+        ("Lt. Blue",   "BDD7EE", "1F4E79", "B-fill — B-direction loss past an A-side break (A trace is blind here). Single-direction: no averaging. Flagged only when the raw B loss alone clears the single-direction threshold (default 0.250 dB). label: 'F# .xxx (B-fill)'"),
         ("Gray",       "BFBFBF", "3F3F3F", "Dead zone — fiber broke on A side AND B trace also ends before reaching the A-break. Neither trace could see this splice for this fiber. Broke cell shows 'F# broke@XXk | DZ lo-hi k'; affected columns show 'F# DZ'."),
-        ("Lt. Yellow", "FFF2CC", "7F6000", "A-only, est bidir OK — A saw it, no B entry. Estimated bidir (A/2) is below threshold. label: 'F# .xxx(A) ~.xxxbd'"),
-        ("Coral",      "FF7043", "FFFFFF", "A-only, est bidir HIGH — A saw it, no B entry. Estimated bidir (A/2) still exceeds threshold. label: 'F# .xxx(A) ⚠.xxxbd'"),
-        ("Lavender",   "E8D5F5", "4B0082", "B-only, est bidir OK — B saw it, no A entry. Estimated bidir (B/2) is below threshold. label: 'F# .xxx(B) ~.xxxbd'"),
-        ("Purple",     "C084FC", "1A0033", "B-only, est bidir HIGH — B saw it, no A entry. Estimated bidir (B/2) still exceeds threshold. label: 'F# .xxx(B) ⚠.xxxbd'"),
+        ("Lt. Yellow", "FFF2CC", "7F6000", "A-only — A saw it, no B counterpart at the mirror. Single-direction: no averaging. Flagged only when the raw A loss alone clears the single-direction threshold (default 0.250 dB). label: 'F# .xxx (A)'"),
+        ("Lavender",   "E8D5F5", "4B0082", "B-only — B saw it, no A counterpart at the mirror. Single-direction: no averaging. Flagged only when the raw B loss alone clears the single-direction threshold (default 0.250 dB). label: 'F# .xxx (B)'"),
         ("Yellow",     "FFEB3B", "5D4037", "BEND — event ≥ 0.090 dB at a position more than 150 m from the closure center.  Inspect conduit for pinch or tight bend."),
         ("Orange",     "FFA500", "5D2E00", "LAUNCH — fiber has a launch-end issue.  Loss rule: launch_loss >= -0.5 dB (anything weaker than a -0.5 dB gainer flags).  Reflectance rule: refl > -15 dB (damaged / dirty connector).  Plus missing file, empty event table.  Single tier — no WATCH/REVIEW/HIGH split.  Appears in ILA column.  Distinct from pink A+B reburn."),
         ("Mint Green", "A5D6A7", "1B5E20", "FIELD GAINER — mid-span event whose signed loss is in [-0.7, 0] dB (suspicious near-zero / weak-gainer event).  Excludes events within the launch zone or end-of-fiber region.  Overrides the geometric BEND tag in the [-0.7, -0.090] overlap range."),
