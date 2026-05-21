@@ -316,26 +316,17 @@ with st.sidebar:
     bend_res_bend_m     = int(engine.BEND_RES_BEND_M)
     bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
 
-# ── OTDR settings panel — EXFO-styled threshold table (always visible) ──
-# Always rendered in the sidebar.  Sidebar is widened via CSS so the
-# table fits without wrapping or clipping.
-if True:
-  with st.sidebar:
-    # Custom CSS to make the table look like the EXFO threshold panel:
-    # narrow row spacing, Segoe-UI-style font, grey header, thin borders,
-    # disabled inputs greyed.  Widget DOM elements live INSIDE these
-    # styled containers, so the look applies to checkbox / number-input
-    # rendering as well as the static text.
-    # Force-light EXFO-style CSS scoped to the sidebar.  Streamlit's
-    # dark theme bleeds through otherwise — labels go grey, inputs go
-    # dark, checkboxes go green, button goes lime.  We override all of
-    # that with !important inside the sidebar.
+# ── OTDR settings panel — pixel-perfect EXFO match (Option B) ────────
+# Rendered by a custom Streamlit component (raw HTML + CSS + JS) so we
+# bypass Streamlit's widget chrome entirely.  Always visible in the
+# sidebar.  See components/otdr_settings/index.html for the visual
+# implementation.
+from components.otdr_settings import otdr_settings as otdr_settings_component
+
+with st.sidebar:
+    # Widen the sidebar so the EXFO-styled table fits cleanly.
     st.markdown("""
     <style>
-      /* Widen the sidebar so the OTDR table fits without wrapping or
-         clipping.  Streamlit's default sidebar is ~244 px wide; we
-         need ~600 px to accommodate Description + Apply + Fail +
-         Warning columns with EXFO-style padding. */
       section[data-testid="stSidebar"],
       section[data-testid="stSidebar"][aria-expanded="true"] {
         width: 620px !important;
@@ -346,177 +337,37 @@ if True:
         width: 620px !important;
         min-width: 620px !important;
       }
-      /* Force the sidebar into a light, EXFO-like look while the OTDR
-         panel is visible.  Scoped strictly to [data-testid='stSidebar']
-         so the main app pane keeps its theme. */
-      section[data-testid="stSidebar"] {
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
-      }
-      /* Light-mode label colour for every row (was being inherited
-         from Streamlit's dark theme as a faint grey on dark bg) */
-      section[data-testid="stSidebar"] .otdr-row-label,
-      section[data-testid="stSidebar"] .otdr-row-label-disabled {
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
-        font-size: 12.5px !important;
-        padding: 6px 8px !important;
-        background: #FFFFFF !important;
-        border-bottom: 1px solid #BFBFBF !important;
-        line-height: 1.2 !important;
-      }
-      section[data-testid="stSidebar"] .otdr-row-label {
-        color: #1F1F1F !important;
-      }
-      section[data-testid="stSidebar"] .otdr-row-label-disabled {
-        color: #9C9C9C !important;
-      }
-      /* Header band (top title + column headers) */
-      section[data-testid="stSidebar"] .otdr-hdr {
-        background: #D6D6D6 !important;
-        color: #1F1F1F !important;
-        font-weight: 600 !important;
-        font-size: 12.5px !important;
-        padding: 6px 8px !important;
-        border-bottom: 1px solid #9C9C9C !important;
-        line-height: 1.2 !important;
-        white-space: nowrap !important;
-        text-align: center;
-      }
-      /* Number-input field: white bg, dark text, no chrome.  EXFO
-         renders these as plain inset text-entry boxes. */
-      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div {
-        background: transparent !important;
-        border: none !important;
-      }
-      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {
-        background: #FFFFFF !important;
-        color: #1F1F1F !important;
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
-        font-size: 12.5px !important;
-        padding: 4px 6px !important;
-        border: 1px solid #BFBFBF !important;
-        border-radius: 0 !important;
-        text-align: right !important;
-        min-height: 22px !important;
-        box-shadow: none !important;
-      }
-      /* Disabled inputs go grey on light grey, matching EXFO */
-      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input:disabled {
-        background: #F0F0F0 !important;
-        color: #9C9C9C !important;
-        -webkit-text-fill-color: #9C9C9C !important;
-      }
-      /* Hide the +/- step buttons + the StreamLit container chrome */
-      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] button {
-        display: none !important;
-      }
-      /* Checkbox: force blue accent (overrides Streamlit's green) */
-      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] {
-        display: flex !important;
-        justify-content: center !important;
-        background: #FFFFFF !important;
-        border-bottom: 1px solid #BFBFBF !important;
-        padding: 4px 0 !important;
-      }
-      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label {
-        background: transparent !important;
-      }
-      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label > div[role="checkbox"] {
-        background-color: #FFFFFF !important;
-        border: 1px solid #6F6F6F !important;
-        border-radius: 2px !important;
-        width: 16px !important;
-        height: 16px !important;
-      }
-      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label > div[role="checkbox"][aria-checked="true"] {
-        background-color: #1F6FEB !important;
-        border-color: #1F6FEB !important;
-      }
-      /* Tighten row spacing — no extra gap between columns */
-      section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
-        gap: 0 !important;
-        margin: 0 !important;
-      }
-      /* Hide the gap between rows that Streamlit adds */
-      section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
-        gap: 0 !important;
-      }
-      /* Tame the "Apply settings" button — neutral grey, not lime green */
-      section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"] {
-        background: #4A6FA5 !important;
-        color: #FFFFFF !important;
-        border: 1px solid #2D4A75 !important;
-        border-radius: 2px !important;
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
-        font-weight: 600 !important;
-      }
-      section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"]:hover {
-        background: #5A7FB5 !important;
-        border-color: #2D4A75 !important;
-      }
     </style>
     """, unsafe_allow_html=True)
 
-    # Title bar
-    st.markdown('<div class="otdr-hdr" style="text-align:left;">'
-                'OTDR settings — Thresholds'
-                '</div>', unsafe_allow_html=True)
-
-    # Column ratios: Description wide, Apply just wide enough that the
-    # 5-letter header doesn't wrap, Fail / Warning equal.
-    COL_RATIOS = [4.0, 1.4, 1.7, 1.7]
-
-    # Header row (column titles)
-    h = st.columns(COL_RATIOS)
-    h[0].markdown('<div class="otdr-hdr" style="text-align:left;">Description</div>',
-                   unsafe_allow_html=True)
-    h[1].markdown('<div class="otdr-hdr">Apply</div>',
-                   unsafe_allow_html=True)
-    h[2].markdown('<div class="otdr-hdr">Fail</div>',
-                   unsafe_allow_html=True)
-    h[3].markdown('<div class="otdr-hdr">Warning</div>',
-                   unsafe_allow_html=True)
-
-    # Data rows
-    for key, label, default_fail, unit, supported in OTDR_ROWS:
-        cur = st.session_state.otdr_settings[key]
-        row = st.columns(COL_RATIOS)
-        # Black text when Apply is on, grey when off — matches EXFO.
-        label_cls = ("otdr-row-label" if cur["apply"]
-                     else "otdr-row-label-disabled")
-        row[0].markdown(f'<div class="{label_cls}">{label}</div>',
-                         unsafe_allow_html=True)
-        new_apply = row[1].checkbox(
-            "apply", value=cur["apply"], key=f"otdr_apply_{key}",
-            label_visibility="collapsed",
-        )
-        # Format string: 3 decimal places for dB, 4 for km
-        fmt = "%.3f" if unit != "km" else "%.4f"
-        new_fail = row[2].number_input(
-            f"fail_{key}", value=float(cur["fail"]),
-            step=0.001 if unit == "dB" else 0.01,
-            format=fmt, disabled=not new_apply,
-            key=f"otdr_fail_{key}",
-            label_visibility="collapsed",
-        )
-        new_warning = row[3].number_input(
-            f"warn_{key}", value=float(cur["warning"]),
-            step=0.001 if unit == "dB" else 0.01,
-            format=fmt, disabled=not new_apply,
-            key=f"otdr_warn_{key}",
-            label_visibility="collapsed",
-        )
-
-    # Apply button — commits the in-progress checkbox+input state into
-    # session_state.otdr_settings, which the pipeline reads on next run.
-    if st.button("Apply settings", use_container_width=True,
-                  type="primary"):
-        for key, _, _, _, _ in OTDR_ROWS:
+    # Build the rows definition for the component.  Each row's initial
+    # values come from session_state (the user's last-committed
+    # settings); the supported flag tells the component whether to
+    # decorate it as 'not yet wired'.
+    _otdr_rows_for_component = [
+        {
+            "key":       key,
+            "label":     label,
+            "unit":      unit,
+            "supported": supported,
+            "initial":   st.session_state.otdr_settings[key],
+        }
+        for key, label, _fail, unit, supported in OTDR_ROWS
+    ]
+    _commit = otdr_settings_component(
+        _otdr_rows_for_component,
+        default=None,
+        key="otdr_component",
+    )
+    if _commit:
+        # User clicked Apply settings inside the component — persist
+        # to session_state.otdr_settings for the next report run.
+        for key, vals in _commit.items():
             st.session_state.otdr_settings[key] = {
-                "apply":   st.session_state[f"otdr_apply_{key}"],
-                "fail":    st.session_state[f"otdr_fail_{key}"],
-                "warning": st.session_state[f"otdr_warn_{key}"],
+                "apply":   bool(vals.get("apply")),
+                "fail":    float(vals.get("fail", 0.0)),
+                "warning": float(vals.get("warning", 0.0)),
             }
-        st.success("Settings applied to next report run.")
 
 
 # OTDR settings overrides — when a row's Apply checkbox is ticked,
