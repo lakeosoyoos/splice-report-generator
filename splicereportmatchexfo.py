@@ -1072,7 +1072,15 @@ def refine_closure_centers(fibers_a, splices, validate=True,
         if len(tight_losses) >= MIN_POP_SPLICE:
             no_gainers_fail = sp['gainer_frac'] < min_gnr
             high_median_fail = sp['median_loss_db'] > med_max
-            if no_gainers_fail and high_median_fail:
+            # Tight-frac override: a cluster with >= 60% of ALL fibers
+            # represented inside the 75 m tight window is unambiguously a
+            # splice closure regardless of loss distribution — real bend
+            # zones never reach that participation, but a uniformly-bad
+            # closure (every fiber lost ~0.11 dB, no gainers) can still
+            # fail the loss-distribution test and otherwise be dropped
+            # (e.g. Lagrande↔Durkey 17.47 km, 67.37 km).
+            tight_frac_override = sp['tight_frac'] >= 0.60
+            if no_gainers_fail and high_median_fail and not tight_frac_override:
                 fails.append(
                     f'loss_distribution(gainers={sp["gainer_frac"]:.2f} + '
                     f'median={sp["median_loss_db"]:+.3f}dB)'
@@ -3213,6 +3221,98 @@ def scan_b_past_breaks(fibers_a, fibers_b, splices, threshold, existing_results,
 
 
 # ═══════════════════════════════════════════════════════════════════════
+#  STEP 4d — Symmetric B-side broke detection
+# ═══════════════════════════════════════════════════════════════════════
+
+def scan_b_side_breaks(fibers_a, fibers_b, splices, existing_results,
+                        total_span_a):
+    """Catch fibers that terminate mid-span on the B trace but whose A
+    trace passes through (B-only breaks).  These represent a real break
+    that one direction's optics can punch through but the other can't —
+    e.g. Lagrande↔Durkey F1-F12 where A reaches 23.96 km but B
+    terminates at 13.91 km (= 90.46 km in A-frame).
+
+    Boss reports a DAMAGE column at the mirrored A-frame position; we
+    were missing it because Pass 1's broke detection walks only the A
+    direction.
+
+    Returns dict {(fnum, nearest_si): result_dict} of new broke entries.
+    """
+    new_results = {}
+    seen_keys = set(existing_results.keys())
+
+    # Cache A end positions to detect A-broken fibers (skip those — Pass 1
+    # already logged them; double-flagging would create duplicate columns).
+    a_eof = {}
+    for fnum, ra in fibers_a.items():
+        end = [e for e in ra['events'] if e.get('is_end')]
+        a_eof[fnum] = end[0]['dist_km'] if end else None
+
+    # Cable total span in B's frame (median of top-quarter B-trace ends)
+    eof_b = []
+    for fnum, rb in fibers_b.items():
+        end = [e for e in rb['events'] if e.get('is_end')]
+        if end:
+            eof_b.append(end[0]['dist_km'])
+    if not eof_b:
+        return new_results
+    eof_b.sort()
+    total_span_b = float(np.median(eof_b[int(len(eof_b)*0.75):]))
+
+    for fnum, rb in fibers_b.items():
+        end = [e for e in rb['events'] if e.get('is_end')]
+        if not end:
+            continue
+        b_eof = end[0]['dist_km']
+
+        # B-trace must terminate mid-span (≥ END_REGION_KM short of B's far end).
+        if b_eof >= total_span_b - END_REGION_KM:
+            continue
+        if b_eof < 1.0:
+            continue
+
+        # Mirror B's eof into A-frame so we attribute to the right closure.
+        a_frame_break_km = total_span_a - b_eof if total_span_a > 0 else b_eof
+
+        # If A is also broken, the A-side broke entry already lives at the
+        # A-frame position of the A-break — typically a different km than
+        # the B-side break.  Only suppress if the two breaks mirror to
+        # nearly the same A-frame position (within END_REGION_KM); otherwise
+        # log BOTH (boss does the same — F1-F12 in Lagrande↔Durkey are
+        # listed as broken at both 23.95 km on A and 90.46 km on B).
+        a_end = a_eof.get(fnum)
+        if (a_end is not None and 0 < a_end < total_span_a - END_REGION_KM
+                and abs(a_end - a_frame_break_km) < END_REGION_KM):
+            continue
+
+        # Pick nearest closure by A-frame km (same convention as A-side).
+        nearest_si = min(range(len(splices)),
+                         key=lambda i: abs(splices[i]['position_km'] - a_frame_break_km))
+        key = (fnum, nearest_si)
+        # When Pass 1 left a dead-zone marker at this cell (A-broken fiber,
+        # downstream splice past the break), the B-side break supersedes
+        # it — a concrete broke entry is more informative than 'DZ'.  For
+        # any other prior entry, keep the existing classification.
+        prior = existing_results.get(key)
+        if prior is not None and not prior.get('is_dead_zone'):
+            continue
+
+        label = f"{fnum} broke@{a_frame_break_km:.1f}k (B-only)"
+        new_results[key] = {
+            'fiber': fnum, 'splice_idx': nearest_si,
+            'bidir_loss': None, 'a_loss': None, 'b_loss': None,
+            'bidir_dist': a_frame_break_km,
+            'is_break': False, 'is_broke': True, 'is_bend': False,
+            'is_bfill': False, 'is_dead_zone': False,
+            'is_a_only': False, 'is_b_only': False,
+            'is_flagged': True, 'event_source': 'broke_b',
+            'event_type': 'BROKE_B', 'label': label,
+        }
+
+    return new_results
+
+
+# ═══════════════════════════════════════════════════════════════════════
 #  STEP 5 — Group into ribbons and build cell values
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -4049,9 +4149,22 @@ def main():
     )
     print(f"  Pass 2c results: {len(b_pastbreak)} B-fill events")
 
-    # Merge — Pass 1 takes priority; then standalone; then ghost refl; then merged refl; then B-fill
-    all_results = {**results, **a_standalone, **ghost_refl, **merged_refl, **b_pastbreak}
-    b_results = {**a_standalone, **ghost_refl, **merged_refl, **b_pastbreak}
+    # Pass 2d — B-only mid-span breaks (A trace passes through, B trace
+    # terminates).  Boss caught Lagrande↔Durkey F1-F12 with this signature
+    # at km 90.46; Pass 1's A-driven broke check can't see them.
+    print(f"\nPass 2d: Scanning B-only mid-span breaks "
+          f"(A trace healthy, B trace terminates mid-span)...")
+    pre_existing = {**results, **a_standalone, **ghost_refl, **merged_refl, **b_pastbreak}
+    b_side_breaks = scan_b_side_breaks(
+        fibers_a, fibers_b, splices, pre_existing, span_km,
+    )
+    print(f"  Pass 2d results: {len(b_side_breaks)} B-only broke fibers")
+
+    # Merge — Pass 1 takes priority; then standalone; then ghost refl; then merged refl; then B-fill; then B-side broke
+    all_results = {**results, **a_standalone, **ghost_refl, **merged_refl,
+                    **b_pastbreak, **b_side_breaks}
+    b_results = {**a_standalone, **ghost_refl, **merged_refl,
+                  **b_pastbreak, **b_side_breaks}
 
     # Field-gainer annotation — flag mid-span events whose signed loss
     # falls in [-0.7, 0] dB (suspicious near-zero / weak-gainer events).
