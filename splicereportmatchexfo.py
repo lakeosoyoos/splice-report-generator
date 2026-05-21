@@ -2089,7 +2089,12 @@ def analyze_all(fibers_a, fibers_b, splices, threshold,
                 nearest_splice = min(range(len(splices)),
                                      key=lambda i: abs(splices[i]['position_km'] - fiber_end))
                 nearest_dist = abs(splices[nearest_splice]['position_km'] - fiber_end)
-                if nearest_splice == si and nearest_dist < 2.0:
+                # No distance cap here: a break can sit several km from
+                # any splice closure (e.g. Durkee↔La Grande F311–F384 at
+                # km 38.43 — 3 km from the nearest closure).  We log it
+                # against the NEAREST splice and let the off-splice
+                # splitter relocate it into its own damage column.
+                if nearest_splice == si:
                     # Enrich label with B-fill coverage / dead-zone range
                     if _dead_zone is not None:
                         _broke_label = (f"{fnum} broke@{fiber_end:.1f}k | "
