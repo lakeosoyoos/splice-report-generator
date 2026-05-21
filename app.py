@@ -285,12 +285,10 @@ OTDR_ROWS = [
     ("span_loss",                 "Span loss",                  20.000,       "dB",    False),
     ("span_length",               "Span length",                0.0000,       "km",    False),
     ("span_orl",                  "Span ORL",                   15.00,        "dB",    False),
-    ("ribbon_size",               "Ribbon size",                float(engine.RIBBON_SIZE), "fibers", True),
 ]
 # Pre-checked rows (match what splice report flags out of the box):
 OTDR_DEFAULT_APPLY = {"unidir_splice_loss", "bidir_splice_loss",
-                       "bidir_connector_loss", "reflectance",
-                       "ribbon_size"}
+                       "bidir_connector_loss", "reflectance"}
 
 # Initialise persisted settings on first run
 if "otdr_settings" not in st.session_state:
@@ -306,8 +304,7 @@ if "otdr_settings" not in st.session_state:
 with st.sidebar:
     # Every engine threshold the user can't reach via the OTDR panel
     # falls back to the module default — fixed for the duration of the run.
-    # ribbon_size now driven by the OTDR settings panel (see below).
-    ribbon_size         = int(engine.RIBBON_SIZE)  # provisional; replaced after panel read
+    ribbon_size         = int(engine.RIBBON_SIZE)
     bend_thr            = float(engine.BEND_THRESHOLD)
     closure_match_m     = int(engine.CLOSURE_MATCH_KM * 1000)
     position_tol_km     = float(engine.POSITION_TOL)
@@ -389,7 +386,6 @@ single_dir_thr = _otdr_override("unidir_splice_loss", float(engine.SINGLE_DIR_TH
 bad_refl_db    = _otdr_override("reflectance",        float(engine.LAUNCH_BAD_REFL_DB))
 connector_loss = _otdr_override("bidir_connector_loss",
                                   float(engine.BIDIR_CONNECTOR_LOSS))
-ribbon_size    = int(_otdr_override("ribbon_size", float(engine.RIBBON_SIZE)))
 
 # Build the overrides dict in one place — what gets pushed onto the engine
 # module before each run.

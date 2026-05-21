@@ -199,7 +199,7 @@ function renderRows() {
     const f = document.createElement("input");
     f.type = "number";
     f.value = cur.fail;
-    f.step = (row.unit === "km") ? 0.0001 : (row.unit === "fibers") ? 1 : 0.001;
+    f.step = (row.unit === "km") ? 0.0001 : 0.001;
     f.disabled = !enabled;
     f.addEventListener("input", () => {
       state[row.key].fail = parseFloat(f.value);
@@ -217,7 +217,7 @@ function renderRows() {
     const w = document.createElement("input");
     w.type = "number";
     w.value = cur.warning;
-    w.step = (row.unit === "km") ? 0.0001 : (row.unit === "fibers") ? 1 : 0.001;
+    w.step = (row.unit === "km") ? 0.0001 : 0.001;
     w.disabled = !enabled;
     w.addEventListener("input", () => {
       state[row.key].warning = parseFloat(w.value);
