@@ -4,7 +4,7 @@ Splice Report Generator — Streamlit App
 Bidirectional splice QC report from OTDR SOR or JSON files (EXFO FastReporter).
 
 Simplified UI modelled after the Unidirectional One Shot app:
-  • Sidebar: Settings (ribbon size + all detection thresholds as sliders)
+  • Sidebar: EXFO-style OTDR settings panel (always visible)
   • Main:    1. Upload  →  2. Run  →  3. Results
 
 Launch:  streamlit run app.py
@@ -253,7 +253,7 @@ def _detect_sites(dir_a: str, dir_b: str | None = None) -> tuple[str, str]:
 
 def _apply_overrides(thresholds: dict) -> dict:
     """Snapshot the engine's module-level constants we're about to override,
-    apply the slider values, and return the snapshot so the caller can
+    apply the panel values, and return the snapshot so the caller can
     restore them after the run."""
     saved = {k: getattr(engine, k) for k in thresholds}
     for k, v in thresholds.items():
@@ -488,7 +488,7 @@ if run_clicked:
     site_a, site_b = _detect_sites(dir_a, dir_b)
     log_buf = io.StringIO()
 
-    # Apply slider overrides to the engine module for the duration of this run
+    # Apply OTDR-panel overrides to the engine module for the duration of this run
     saved = _apply_overrides(THRESHOLDS)
     try:
         prog.progress(0.25, text="Loading OTDR files...")
