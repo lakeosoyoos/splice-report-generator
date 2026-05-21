@@ -334,82 +334,147 @@ if st.session_state.show_otdr:
     # disabled inputs greyed.  Widget DOM elements live INSIDE these
     # styled containers, so the look applies to checkbox / number-input
     # rendering as well as the static text.
+    # Force-light EXFO-style CSS scoped to the sidebar.  Streamlit's
+    # dark theme bleeds through otherwise — labels go grey, inputs go
+    # dark, checkboxes go green, button goes lime.  We override all of
+    # that with !important inside the sidebar.
     st.markdown("""
     <style>
-      /* Tight, EXFO-style table */
-      div[data-testid="stSidebarContent"] section[data-testid="stVerticalBlock"] > div:has(div.otdr-table-tag) {
-        background: #FFFFFF;
-        border: 1px solid #BFBFBF;
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
-        font-size: 12.5px;
+      /* Force the sidebar into a light, EXFO-like look while the OTDR
+         panel is visible.  Scoped strictly to [data-testid='stSidebar']
+         so the main app pane keeps its theme. */
+      section[data-testid="stSidebar"] {
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
       }
-      .otdr-hdr {
-        background: #D6D6D6;
-        font-weight: 600;
-        color: #1F1F1F;
-        padding: 4px 8px;
-        border-bottom: 1px solid #BFBFBF;
+      /* Light-mode label colour for every row (was being inherited
+         from Streamlit's dark theme as a faint grey on dark bg) */
+      section[data-testid="stSidebar"] .otdr-row-label,
+      section[data-testid="stSidebar"] .otdr-row-label-disabled {
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
+        font-size: 12.5px !important;
+        padding: 6px 8px !important;
+        background: #FFFFFF !important;
+        border-bottom: 1px solid #BFBFBF !important;
+        line-height: 1.2 !important;
       }
-      .otdr-row-label {
-        color: #1F1F1F;
-        padding: 4px 8px;
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
-        font-size: 12.5px;
+      section[data-testid="stSidebar"] .otdr-row-label {
+        color: #1F1F1F !important;
       }
-      .otdr-row-label-disabled {
-        color: #9C9C9C;
-        padding: 4px 8px;
-        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
-        font-size: 12.5px;
+      section[data-testid="stSidebar"] .otdr-row-label-disabled {
+        color: #9C9C9C !important;
       }
-      /* Compact the number-input widgets inside the OTDR table */
-      div[data-testid="stNumberInput"] > div > div > input {
-        padding: 2px 4px;
-        font-size: 12.5px;
+      /* Header band (top title + column headers) */
+      section[data-testid="stSidebar"] .otdr-hdr {
+        background: #D6D6D6 !important;
+        color: #1F1F1F !important;
+        font-weight: 600 !important;
+        font-size: 12.5px !important;
+        padding: 6px 8px !important;
+        border-bottom: 1px solid #9C9C9C !important;
+        line-height: 1.2 !important;
+        white-space: nowrap !important;
+        text-align: center;
       }
-      /* Hide the +/- step buttons to match EXFO's plain text-entry look */
-      div[data-testid="stNumberInput"] button {
+      /* Number-input field: white bg, dark text, no chrome.  EXFO
+         renders these as plain inset text-entry boxes. */
+      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] > div {
+        background: transparent !important;
+        border: none !important;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input {
+        background: #FFFFFF !important;
+        color: #1F1F1F !important;
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
+        font-size: 12.5px !important;
+        padding: 4px 6px !important;
+        border: 1px solid #BFBFBF !important;
+        border-radius: 0 !important;
+        text-align: right !important;
+        min-height: 22px !important;
+        box-shadow: none !important;
+      }
+      /* Disabled inputs go grey on light grey, matching EXFO */
+      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] input:disabled {
+        background: #F0F0F0 !important;
+        color: #9C9C9C !important;
+        -webkit-text-fill-color: #9C9C9C !important;
+      }
+      /* Hide the +/- step buttons + the StreamLit container chrome */
+      section[data-testid="stSidebar"] div[data-testid="stNumberInput"] button {
         display: none !important;
       }
-      /* Style disabled inputs to look greyed like EXFO */
-      div[data-testid="stNumberInput"] > div > div > input:disabled {
-        color: #9C9C9C !important;
-        background: #F5F5F5 !important;
+      /* Checkbox: force blue accent (overrides Streamlit's green) */
+      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] {
+        display: flex !important;
+        justify-content: center !important;
+        background: #FFFFFF !important;
+        border-bottom: 1px solid #BFBFBF !important;
+        padding: 4px 0 !important;
       }
-      /* Apply checkbox: blue when checked (matches EXFO's blue check) */
-      div[data-testid="stCheckbox"] label > div[role="checkbox"][aria-checked="true"] {
+      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label {
+        background: transparent !important;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label > div[role="checkbox"] {
+        background-color: #FFFFFF !important;
+        border: 1px solid #6F6F6F !important;
+        border-radius: 2px !important;
+        width: 16px !important;
+        height: 16px !important;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stCheckbox"] label > div[role="checkbox"][aria-checked="true"] {
         background-color: #1F6FEB !important;
         border-color: #1F6FEB !important;
       }
-      /* Tighten row spacing */
-      div[data-testid="stHorizontalBlock"] {
-        gap: 4px !important;
+      /* Tighten row spacing — no extra gap between columns */
+      section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+        gap: 0 !important;
+        margin: 0 !important;
+      }
+      /* Hide the gap between rows that Streamlit adds */
+      section[data-testid="stSidebar"] div[data-testid="stVerticalBlock"] > div {
+        gap: 0 !important;
+      }
+      /* Tame the "Apply settings" button — neutral grey, not lime green */
+      section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"] {
+        background: #4A6FA5 !important;
+        color: #FFFFFF !important;
+        border: 1px solid #2D4A75 !important;
+        border-radius: 2px !important;
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif !important;
+        font-weight: 600 !important;
+      }
+      section[data-testid="stSidebar"] div[data-testid="stButton"] > button[kind="primary"]:hover {
+        background: #5A7FB5 !important;
+        border-color: #2D4A75 !important;
       }
     </style>
-    <div class="otdr-table-tag" style="display:none;"></div>
     """, unsafe_allow_html=True)
 
-    st.markdown('<div class="otdr-hdr">'
+    # Title bar
+    st.markdown('<div class="otdr-hdr" style="text-align:left;">'
                 'OTDR settings — Thresholds'
                 '</div>', unsafe_allow_html=True)
 
-    # Header row
-    h = st.columns([5, 1, 2, 2])
-    h[0].markdown('<div class="otdr-hdr">Description</div>',
+    # Column ratios: Description wide, Apply just wide enough that the
+    # 5-letter header doesn't wrap, Fail / Warning equal.
+    COL_RATIOS = [4.0, 1.4, 1.7, 1.7]
+
+    # Header row (column titles)
+    h = st.columns(COL_RATIOS)
+    h[0].markdown('<div class="otdr-hdr" style="text-align:left;">Description</div>',
                    unsafe_allow_html=True)
-    h[1].markdown('<div class="otdr-hdr" style="text-align:center;">Apply</div>',
+    h[1].markdown('<div class="otdr-hdr">Apply</div>',
                    unsafe_allow_html=True)
-    h[2].markdown('<div class="otdr-hdr" style="text-align:center;">Fail</div>',
+    h[2].markdown('<div class="otdr-hdr">Fail</div>',
                    unsafe_allow_html=True)
-    h[3].markdown('<div class="otdr-hdr" style="text-align:center;">Warning</div>',
+    h[3].markdown('<div class="otdr-hdr">Warning</div>',
                    unsafe_allow_html=True)
 
     # Data rows
     for key, label, default_fail, unit, supported in OTDR_ROWS:
         cur = st.session_state.otdr_settings[key]
-        row = st.columns([5, 1, 2, 2])
-        # Label uses 'enabled' or 'disabled' class — visually matches EXFO's
-        # grey-out for unticked rows.
+        row = st.columns(COL_RATIOS)
+        # Black text when Apply is on, grey when off — matches EXFO.
         label_cls = ("otdr-row-label" if cur["apply"]
                      else "otdr-row-label-disabled")
         row[0].markdown(f'<div class="{label_cls}">{label}</div>',
