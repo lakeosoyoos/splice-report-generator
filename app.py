@@ -301,16 +301,6 @@ if "otdr_settings" not in st.session_state:
     }
 
 with st.sidebar:
-    # OTDR settings is the ONLY user-facing settings entry now.  Every
-    # other engine threshold falls back to its module default.
-    if "show_otdr" not in st.session_state:
-        st.session_state.show_otdr = False
-    otdr_btn_label = ("Hide OTDR settings" if st.session_state.show_otdr
-                       else "OTDR settings")
-    if st.button(otdr_btn_label, use_container_width=True):
-        st.session_state.show_otdr = not st.session_state.show_otdr
-        st.rerun()
-
     # Every engine threshold the user can't reach via the OTDR panel
     # falls back to the module default — fixed for the duration of the run.
     ribbon_size         = int(engine.RIBBON_SIZE)
@@ -326,8 +316,10 @@ with st.sidebar:
     bend_res_bend_m     = int(engine.BEND_RES_BEND_M)
     bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
 
-# ── OTDR settings panel — EXFO-styled threshold table ──────────────────
-if st.session_state.show_otdr:
+# ── OTDR settings panel — EXFO-styled threshold table (always visible) ──
+# Always rendered in the sidebar.  Sidebar is widened via CSS so the
+# table fits without wrapping or clipping.
+if True:
   with st.sidebar:
     # Custom CSS to make the table look like the EXFO threshold panel:
     # narrow row spacing, Segoe-UI-style font, grey header, thin borders,
@@ -340,6 +332,20 @@ if st.session_state.show_otdr:
     # that with !important inside the sidebar.
     st.markdown("""
     <style>
+      /* Widen the sidebar so the OTDR table fits without wrapping or
+         clipping.  Streamlit's default sidebar is ~244 px wide; we
+         need ~600 px to accommodate Description + Apply + Fail +
+         Warning columns with EXFO-style padding. */
+      section[data-testid="stSidebar"],
+      section[data-testid="stSidebar"][aria-expanded="true"] {
+        width: 620px !important;
+        min-width: 620px !important;
+        max-width: 620px !important;
+      }
+      section[data-testid="stSidebar"] > div {
+        width: 620px !important;
+        min-width: 620px !important;
+      }
       /* Force the sidebar into a light, EXFO-like look while the OTDR
          panel is visible.  Scoped strictly to [data-testid='stSidebar']
          so the main app pane keeps its theme. */
