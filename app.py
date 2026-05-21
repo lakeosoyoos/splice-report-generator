@@ -301,17 +301,8 @@ if "otdr_settings" not in st.session_state:
     }
 
 with st.sidebar:
-    # Tucked-away advanced settings — sidebar is clean by default, sliders
-    # appear only after the user clicks 'Advanced settings'.
-    if "show_settings" not in st.session_state:
-        st.session_state.show_settings = False
-    btn_label = ("⚙  Hide advanced settings" if st.session_state.show_settings
-                 else "⚙  Advanced settings")
-    if st.button(btn_label, use_container_width=True):
-        st.session_state.show_settings = not st.session_state.show_settings
-        st.rerun()
-
-    # OTDR settings button (EXFO-style threshold table)
+    # OTDR settings is the ONLY user-facing settings entry now.  Every
+    # other engine threshold falls back to its module default.
     if "show_otdr" not in st.session_state:
         st.session_state.show_otdr = False
     otdr_btn_label = ("Hide OTDR settings" if st.session_state.show_otdr
@@ -320,10 +311,9 @@ with st.sidebar:
         st.session_state.show_otdr = not st.session_state.show_otdr
         st.rerun()
 
-    # Defaults always come from the engine module — used both when the
-    # settings panel is hidden and as the initial value of every slider.
+    # Every engine threshold the user can't reach via the OTDR panel
+    # falls back to the module default — fixed for the duration of the run.
     ribbon_size         = int(engine.RIBBON_SIZE)
-    reburn_thr          = float(engine.REBURN_THRESHOLD)
     bend_thr            = float(engine.BEND_THRESHOLD)
     closure_match_m     = int(engine.CLOSURE_MATCH_KM * 1000)
     position_tol_km     = float(engine.POSITION_TOL)
@@ -331,58 +321,122 @@ with st.sidebar:
     launch_fiber_max_km = float(engine.LAUNCH_FIBER_MAX)
     end_region_km       = float(engine.END_REGION_KM)
     spans_have_tailbox  = True
-    bad_refl_db         = float(engine.LAUNCH_BAD_REFL_DB)
     tailbox_outlier_db  = 10.0
     bend_res_splice_m   = int(engine.BEND_RES_SPLICE_M)
     bend_res_bend_m     = int(engine.BEND_RES_BEND_M)
     bend_narrow_loss_db = float(engine.BEND_NARROW_LOSS_DB)
-    single_dir_thr      = float(engine.SINGLE_DIR_THRESHOLD)
 
+# ── OTDR settings panel — EXFO-styled threshold table ──────────────────
 if st.session_state.show_otdr:
   with st.sidebar:
-    st.header("OTDR settings")
-    st.caption(
-        "Tick **Apply** on a row to override that threshold with the "
-        "value you type in **Fail**.  Unticked rows fall back to the "
-        "engine default.  Warning column is shown for parity with EXFO "
-        "but currently unused (engine uses Fail only).  Rows marked "
-        "_(not yet wired)_ are visual placeholders — their Apply "
-        "checkbox has no effect on the report yet."
-    )
+    # Custom CSS to make the table look like the EXFO threshold panel:
+    # narrow row spacing, Segoe-UI-style font, grey header, thin borders,
+    # disabled inputs greyed.  Widget DOM elements live INSIDE these
+    # styled containers, so the look applies to checkbox / number-input
+    # rendering as well as the static text.
+    st.markdown("""
+    <style>
+      /* Tight, EXFO-style table */
+      div[data-testid="stSidebarContent"] section[data-testid="stVerticalBlock"] > div:has(div.otdr-table-tag) {
+        background: #FFFFFF;
+        border: 1px solid #BFBFBF;
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+        font-size: 12.5px;
+      }
+      .otdr-hdr {
+        background: #D6D6D6;
+        font-weight: 600;
+        color: #1F1F1F;
+        padding: 4px 8px;
+        border-bottom: 1px solid #BFBFBF;
+      }
+      .otdr-row-label {
+        color: #1F1F1F;
+        padding: 4px 8px;
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+        font-size: 12.5px;
+      }
+      .otdr-row-label-disabled {
+        color: #9C9C9C;
+        padding: 4px 8px;
+        font-family: 'Segoe UI', Tahoma, Verdana, sans-serif;
+        font-size: 12.5px;
+      }
+      /* Compact the number-input widgets inside the OTDR table */
+      div[data-testid="stNumberInput"] > div > div > input {
+        padding: 2px 4px;
+        font-size: 12.5px;
+      }
+      /* Hide the +/- step buttons to match EXFO's plain text-entry look */
+      div[data-testid="stNumberInput"] button {
+        display: none !important;
+      }
+      /* Style disabled inputs to look greyed like EXFO */
+      div[data-testid="stNumberInput"] > div > div > input:disabled {
+        color: #9C9C9C !important;
+        background: #F5F5F5 !important;
+      }
+      /* Apply checkbox: blue when checked (matches EXFO's blue check) */
+      div[data-testid="stCheckbox"] label > div[role="checkbox"][aria-checked="true"] {
+        background-color: #1F6FEB !important;
+        border-color: #1F6FEB !important;
+      }
+      /* Tighten row spacing */
+      div[data-testid="stHorizontalBlock"] {
+        gap: 4px !important;
+      }
+    </style>
+    <div class="otdr-table-tag" style="display:none;"></div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="otdr-hdr">'
+                'OTDR settings — Thresholds'
+                '</div>', unsafe_allow_html=True)
+
     # Header row
-    h = st.columns([4, 1, 2, 2])
-    h[0].markdown("**Description**")
-    h[1].markdown("**Apply**")
-    h[2].markdown("**Fail**")
-    h[3].markdown("**Warning**")
-    # Render each row.  Widget keys are namespaced so they don't collide
-    # with any other Streamlit widget.
+    h = st.columns([5, 1, 2, 2])
+    h[0].markdown('<div class="otdr-hdr">Description</div>',
+                   unsafe_allow_html=True)
+    h[1].markdown('<div class="otdr-hdr" style="text-align:center;">Apply</div>',
+                   unsafe_allow_html=True)
+    h[2].markdown('<div class="otdr-hdr" style="text-align:center;">Fail</div>',
+                   unsafe_allow_html=True)
+    h[3].markdown('<div class="otdr-hdr" style="text-align:center;">Warning</div>',
+                   unsafe_allow_html=True)
+
+    # Data rows
     for key, label, default_fail, unit, supported in OTDR_ROWS:
         cur = st.session_state.otdr_settings[key]
-        row = st.columns([4, 1, 2, 2])
-        suffix = "" if supported else "  _(not yet wired)_"
-        row[0].markdown(f"{label}{suffix}")
+        row = st.columns([5, 1, 2, 2])
+        # Label uses 'enabled' or 'disabled' class — visually matches EXFO's
+        # grey-out for unticked rows.
+        label_cls = ("otdr-row-label" if cur["apply"]
+                     else "otdr-row-label-disabled")
+        row[0].markdown(f'<div class="{label_cls}">{label}</div>',
+                         unsafe_allow_html=True)
         new_apply = row[1].checkbox(
             "apply", value=cur["apply"], key=f"otdr_apply_{key}",
             label_visibility="collapsed",
         )
+        # Format string: 3 decimal places for dB, 4 for km
+        fmt = "%.3f" if unit != "km" else "%.4f"
         new_fail = row[2].number_input(
-            "fail", value=float(cur["fail"]),
+            f"fail_{key}", value=float(cur["fail"]),
             step=0.001 if unit == "dB" else 0.01,
-            format="%.3f", disabled=not new_apply,
+            format=fmt, disabled=not new_apply,
             key=f"otdr_fail_{key}",
             label_visibility="collapsed",
         )
         new_warning = row[3].number_input(
-            "warn", value=float(cur["warning"]),
+            f"warn_{key}", value=float(cur["warning"]),
             step=0.001 if unit == "dB" else 0.01,
-            format="%.3f", disabled=not new_apply,
+            format=fmt, disabled=not new_apply,
             key=f"otdr_warn_{key}",
             label_visibility="collapsed",
         )
-        # Stash unit next to value so we can label correctly later
-        cur_unit = unit
-    # Apply button — commits everything in the form to the settings dict
+
+    # Apply button — commits the in-progress checkbox+input state into
+    # session_state.otdr_settings, which the pipeline reads on next run.
     if st.button("Apply settings", use_container_width=True,
                   type="primary"):
         for key, _, _, _, _ in OTDR_ROWS:
@@ -392,139 +446,6 @@ if st.session_state.show_otdr:
                 "warning": st.session_state[f"otdr_warn_{key}"],
             }
         st.success("Settings applied to next report run.")
-
-if st.session_state.show_settings:
-  with st.sidebar:
-    st.header("Settings")
-
-    ribbon_size = st.number_input(
-        "Ribbon size (fibers per ribbon row)",
-        min_value=1, max_value=24, value=int(engine.RIBBON_SIZE), step=1,
-        help="Number of fibers per row in the output grid.  Standard cable "
-             "ribbons are 12; some 432-count cables use 24 or other sizes.",
-    )
-
-    st.divider()
-    st.caption(
-        "Reburn / single-direction / bad-reflectance thresholds are now "
-        "controlled by the **OTDR settings** panel above."
-    )
-    with st.expander("Detection thresholds", expanded=True):
-        bend_thr = st.slider(
-            "Bend threshold — minimum loss to call a bend (dB)",
-            min_value=0.020, max_value=0.300,
-            value=float(engine.BEND_THRESHOLD), step=0.005, format="%.3f",
-            help="Positive loss step required for an off-splice event to "
-                 "be classified as a bend.  Default 0.090 dB.",
-        )
-        closure_match_m = st.slider(
-            "Splice match radius (m)",
-            min_value=25, max_value=500,
-            value=int(engine.CLOSURE_MATCH_KM * 1000), step=25,
-            help="An event within this distance of a validated splice "
-                 "center renders in the splice column; beyond it gets "
-                 "its own bend / ref / damage column at the actual "
-                 "event km.  Default 75 m — tight enough to catch "
-                 "off-splice events that sit a few hundred metres from "
-                 "the splice, loose enough to absorb the normal per-"
-                 "fiber length-drift seen at every closure.",
-        )
-        position_tol_km = st.slider(
-            "A↔B event-match tolerance (km)",
-            min_value=0.3, max_value=3.0,
-            value=float(engine.POSITION_TOL), step=0.1, format="%.1f",
-            help="Maximum offset between an A-side event and its mirror in "
-                 "the B-direction trace.  Default 1.5 km.",
-        )
-        min_pop_fraction = st.slider(
-            "Min fiber-coverage for a real splice closure (%)",
-            min_value=5, max_value=80,
-            value=int(round(engine.MIN_POP_FRACTION * 100)), step=1,
-            help="A km bucket only counts as a real splice closure if at "
-                 "least this fraction of fibers have an event there.  "
-                 "Per the tech rule, every fiber gets spliced at every "
-                 "closure, so a closure should cover most of the cable.  "
-                 "On well-shot spans, real splices show 60–75% coverage "
-                 "(some low-loss splices don't generate detectable "
-                 "events).  Phantom one-fiber bends sit at <10%.  "
-                 "Default 25% gives plenty of margin to separate them.",
-        )
-
-    with st.expander("End zones (launch / tailbox)", expanded=False):
-        launch_fiber_max_km = st.slider(
-            "Launch / tailbox zone size (km)",
-            min_value=0.5, max_value=10.0,
-            value=float(engine.LAUNCH_FIBER_MAX), step=0.5, format="%.1f",
-            help="Events within this distance of the launch (km 0) or the "
-                 "EOL are excluded from the splice / bend passes and "
-                 "handled by the launch-issue detector instead.  Default "
-                 "3.0 km.",
-        )
-        end_region_km = st.slider(
-            "Cable-end region for phantom-closure drop (km)",
-            min_value=0.5, max_value=10.0,
-            value=float(engine.END_REGION_KM), step=0.5, format="%.1f",
-            help="Phantom splice closures within this distance of the "
-                 "estimated cable end are dropped.  Default 3.0 km.",
-        )
-
-    with st.expander("Launch / tailbox reflectance", expanded=False):
-        spans_have_tailbox = st.checkbox(
-            "Span has tailbox connectors",
-            value=True,
-            help="When ON, the engine checks the far end of each fiber for "
-                 "a healthy tailbox connector and flags missing / dirty "
-                 "ones (BAD_TAILBOX_REFL).  Turn OFF for spans where the "
-                 "cable terminates without a tailbox (e.g. tie-panel "
-                 "shoots, jumper-only spans) — otherwise every fiber's "
-                 "bare-glass end-of-fiber reflection lights up.",
-        )
-        tailbox_outlier_db = st.slider(
-            "Tailbox population-outlier margin (dB)",
-            min_value=2.0, max_value=25.0,
-            value=10.0, step=1.0, format="%.0f",
-            disabled=not spans_have_tailbox,
-            help="A fiber's tailbox refl must also be this many dB worse "
-                 "than the per-direction population median to flag — "
-                 "stops every fiber from lighting up when an entire span "
-                 "was shot with the same bare-glass cable end.  Default "
-                 "10 dB.  (Ignored when 'Span has tailbox connectors' is "
-                 "off.)",
-        )
-
-    with st.expander("Per-fiber bend gate", expanded=False):
-        bend_res_splice_m = st.slider(
-            "Splice residual (≤ this → splice) (m)",
-            min_value=10, max_value=200,
-            value=int(engine.BEND_RES_SPLICE_M), step=5,
-            help="Per-fiber leave-one-out length-model residual at or below "
-                 "this value classifies the event as the fiber's own "
-                 "splice (just offset from the ribbon median).  Default "
-                 "50 m.",
-        )
-        bend_res_bend_m = st.slider(
-            "Bend residual (≥ this → bend candidate) (m)",
-            min_value=50, max_value=500,
-            value=int(engine.BEND_RES_BEND_M), step=10,
-            help="Residual at or above this value qualifies the event for "
-                 "bend classification (then confirmed by narrow-LSA at "
-                 "predicted km).  Default 150 m.",
-        )
-        bend_narrow_loss_db = st.slider(
-            "Narrow-LSA loss to confirm bend (dB)",
-            min_value=0.005, max_value=0.100,
-            value=float(engine.BEND_NARROW_LOSS_DB), step=0.005, format="%.3f",
-            help="When residual lands in the bend zone, a narrow-LSA "
-                 "reading at the predicted splice km must show at least "
-                 "this much loss to confirm the bend is real.  Default "
-                 "0.030 dB.",
-        )
-
-    st.divider()
-    st.caption(
-        "Slider values are applied per-run and reset to defaults on "
-        "reload.  Defaults match the tech-reference report tuning."
-    )
 
 
 # OTDR settings overrides — when a row's Apply checkbox is ticked,
