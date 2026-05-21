@@ -26,7 +26,7 @@ import splicereportmatchexfo as engine
 from splicereportmatchexfo import (
     load_all, discover_splices, refine_closure_centers, detect_launch_issues,
     analyze_all, scan_a_standalone_events, scan_b_past_breaks,
-    apply_field_gainer_rule,
+    apply_field_gainer_rule, apply_connector_loss_rule,
     build_ribbon_data, write_xlsx,
     split_offsplice_events_into_own_columns,
     _normalize_untrimmed_events,
@@ -278,7 +278,7 @@ OTDR_ROWS = [
     ("unidir_splice_loss",        "Unidir. splice loss",        0.250,        "dB",    True),
     ("bidir_splice_loss",         "Bidir splice loss",          0.160,        "dB",    True),
     ("unidir_connector_loss",     "Unidir. connector loss",     0.750,        "dB",    False),
-    ("bidir_connector_loss",      "Bidir connector loss",       0.750,        "dB",    False),
+    ("bidir_connector_loss",      "Bidir connector loss",       0.500,        "dB",    True),
     ("splitter_loss",             "Splitter Loss",              4.500,        "dB",    False),
     ("reflectance",               "Reflectance",                -49.9,        "dB",    True),
     ("fiber_section_atten",       "Fiber section attenuation",  0.400,        "dB/km", False),
@@ -287,7 +287,8 @@ OTDR_ROWS = [
     ("span_orl",                  "Span ORL",                   15.00,        "dB",    False),
 ]
 # Pre-checked rows (match what splice report flags out of the box):
-OTDR_DEFAULT_APPLY = {"unidir_splice_loss", "bidir_splice_loss", "reflectance"}
+OTDR_DEFAULT_APPLY = {"unidir_splice_loss", "bidir_splice_loss",
+                       "bidir_connector_loss", "reflectance"}
 
 # Initialise persisted settings on first run
 if "otdr_settings" not in st.session_state:
@@ -383,12 +384,15 @@ def _otdr_override(key, engine_default):
 reburn_thr     = _otdr_override("bidir_splice_loss",  float(engine.REBURN_THRESHOLD))
 single_dir_thr = _otdr_override("unidir_splice_loss", float(engine.SINGLE_DIR_THRESHOLD))
 bad_refl_db    = _otdr_override("reflectance",        float(engine.LAUNCH_BAD_REFL_DB))
+connector_loss = _otdr_override("bidir_connector_loss",
+                                  float(engine.BIDIR_CONNECTOR_LOSS))
 
 # Build the overrides dict in one place — what gets pushed onto the engine
 # module before each run.
 THRESHOLDS = {
     "REBURN_THRESHOLD":     float(reburn_thr),
     "SINGLE_DIR_THRESHOLD": float(single_dir_thr),
+    "BIDIR_CONNECTOR_LOSS": float(connector_loss),
     "BEND_THRESHOLD":       float(bend_thr),
     "CLOSURE_MATCH_KM":     float(closure_match_m) / 1000.0,
     "POSITION_TOL":         float(position_tol_km),
@@ -584,6 +588,14 @@ if run_clicked:
 
         with redirect_stdout(log_buf):
             apply_field_gainer_rule(all_results, actual_span)
+            # Connector-loss decoration: any 1F event whose bidir loss
+            # reaches the user-configured connector threshold gets a
+            # '⚠ conn' suffix on its cell label.
+            apply_connector_loss_rule(
+                all_results,
+                threshold=THRESHOLDS.get("BIDIR_CONNECTOR_LOSS",
+                                          engine.BIDIR_CONNECTOR_LOSS),
+            )
             # Off-splice events into their own bend/damage columns
             all_results, splices = split_offsplice_events_into_own_columns(
                 all_results, splices, total_span_km=actual_span,

@@ -118,6 +118,15 @@ SINGLE_DIR_THRESHOLD = 0.250  # dB — single-direction-only events (A-only,
                               #     side can't confirm.  No averaging /
                               #     halving — the raw single-direction
                               #     loss must clear this on its own.
+BIDIR_CONNECTOR_LOSS = 0.500  # dB — bidir loss at a reflective (1F)
+                              #     event qualifies as a 'high connector
+                              #     loss' when at or above this value.
+                              #     EXFO convention: in-line connectors
+                              #     and mech splices normally show
+                              #     0.1-0.3 dB loss; >= 0.5 dB indicates
+                              #     a degraded / dirty / damaged
+                              #     connector worth calling out
+                              #     separately from a normal reburn.
 NOMINAL_SPLICE   = 0.159   # dB expected per splice
 RIBBON_SIZE      = 12      # fibers per ribbon
 POSITION_TOL     = 1.5     # km tolerance for matching A↔B events
@@ -1475,6 +1484,52 @@ def apply_field_gainer_rule(all_results, total_span_km):
 def _bend_severity(loss):
     # Severity tiers collapsed — every bend ≥ BEND_THRESHOLD is simply 'BEND'.
     return 'BEND'
+
+
+def apply_connector_loss_rule(all_results, threshold=None):
+    """Flag any reflective (1F) event whose bidir loss reaches the
+    connector-loss threshold (default BIDIR_CONNECTOR_LOSS = 0.500 dB).
+
+    Connectors and mechanical splices normally lose 0.1–0.3 dB.  A
+    bidir reading at or above the connector threshold indicates a
+    degraded / dirty / damaged connector worth surfacing separately
+    from a normal reburn (which fires at REBURN_THRESHOLD = 0.160 dB).
+
+    Adds:
+      r['is_high_connector_loss'] = True
+      label suffix '⚠ conn' appended (no duplicate if already present)
+
+    Existing colour / classification (reburn / ref / etc.) is preserved;
+    this just decorates the cell so the tech can see at a glance which
+    flagged events are connector-loss issues vs splice-loss issues.
+
+    Returns the count of events flagged."""
+    if threshold is None:
+        threshold = BIDIR_CONNECTOR_LOSS
+    flagged = 0
+    for key, r in list(all_results.items()):
+        if not isinstance(r, dict):
+            continue
+        etype = r.get('event_type') or ''
+        if not str(etype).startswith('1F'):
+            continue
+        # Use bidir loss if available, else fall back to single-direction
+        loss = r.get('bidir_loss')
+        if loss is None:
+            loss = (r.get('a_loss') if r.get('a_loss') is not None
+                    else r.get('b_loss'))
+        if loss is None:
+            continue
+        if abs(loss) < threshold:
+            continue
+        r['is_high_connector_loss'] = True
+        # Append suffix to the label (idempotent)
+        lbl = r.get('label') or ''
+        if '⚠ conn' not in lbl:
+            r['label'] = f"{lbl} ⚠ conn".strip()
+        r['is_flagged'] = True
+        flagged += 1
+    return flagged
 
 
 def split_offsplice_events_into_own_columns(all_results, splices,
@@ -3210,6 +3265,15 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
         # Build cell text — label shows source for A-only and B-only
         parts = []
         for g in groups:
+            # Connector-loss decoration: appended to every cell text
+            # when the underlying result is flagged is_high_connector_loss.
+            # The label-based branches already include it via the
+            # apply_connector_loss_rule append; the reconstructed
+            # branches (A-only / B-only / B-fill / generic reburn) need
+            # the suffix added explicitly here.
+            conn_tag = ('  ⚠ conn'
+                        if g['res'].get('is_high_connector_loss')
+                        else '')
             if g.get('is_dead_zone'):
                 # Collapse multi-fiber dead zones into "F1,F2,... DZ"
                 fib_str = ','.join(str(f) for f in g['fibers'])
@@ -3234,26 +3298,26 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
                 # Threshold (SINGLE_DIR_THRESHOLD, default 0.250) was already
                 # gated upstream — anything in this branch cleared 0.250 dB
                 # on its own.
-                parts.append(f"{fib_str} {loss_str} (A)")
+                parts.append(f"{fib_str} {loss_str} (A){conn_tag}")
             elif g['is_b_only']:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 raw_loss = g['res']['b_loss']
                 loss_abs = abs(raw_loss) if raw_loss is not None else 0
                 loss_str = f"{loss_abs:.3f}"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str} (B)")
+                parts.append(f"{fib_str} {loss_str} (B){conn_tag}")
             elif g.get('is_bfill'):
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
                 loss_str = f"{loss:.3f}" if loss is not None else "?"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str} (B-fill)")
+                parts.append(f"{fib_str} {loss_str} (B-fill){conn_tag}")
             else:
                 fib_str = ','.join(str(f) for f in g['fibers'])
                 loss = g['loss']
                 loss_str = f"{loss:.3f}" if loss is not None else "?"
                 if loss_str.startswith('0.'): loss_str = loss_str[1:]
-                parts.append(f"{fib_str} {loss_str}")
+                parts.append(f"{fib_str} {loss_str}{conn_tag}")
 
         cell_text = ' '.join(parts)
         is_break = any(g['is_break'] for g in groups)
@@ -3287,6 +3351,8 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
 
         is_dead_zone = any(g.get('is_dead_zone', False) for g in groups)
         is_gainer    = any(g.get('is_gainer', False) for g in groups)
+        is_high_connector_loss = any(
+            g['res'].get('is_high_connector_loss', False) for g in groups)
 
         cells[(ri, si)] = {
             'text': cell_text,
@@ -3299,6 +3365,7 @@ def build_ribbon_data(results, n_fibers, ribbon_size, n_splices, launch_issues=N
             'is_gainer': is_gainer,
             'is_a_only': is_a_only,
             'is_b_only': is_b_only,
+            'is_high_connector_loss': is_high_connector_loss,
             'est_bidir_flagged': est_bidir_flagged,
             'max_loss': max_loss,
         }
@@ -3986,6 +4053,14 @@ def main():
     n_field_gainers = apply_field_gainer_rule(all_results, span_km)
     print(f"  Field gainers: {n_field_gainers} (loss in "
           f"[{FIELD_GAINER_MIN_DB}, {FIELD_GAINER_MAX_DB}] dB, mid-span)")
+
+    # High-connector-loss annotation — flag any reflective (1F) event
+    # whose bidir loss reaches BIDIR_CONNECTOR_LOSS.  Decorates the
+    # cell label with '⚠ conn' so the tech can spot connector-loss
+    # issues separately from normal splice-loss reburns.
+    n_high_conn = apply_connector_loss_rule(all_results, BIDIR_CONNECTOR_LOSS)
+    print(f"  High connector loss: {n_high_conn} (1F events with "
+          f"bidir >= {BIDIR_CONNECTOR_LOSS} dB)")
 
     # Off-splice bend / break / broke columns: any such event sitting
     # more than CLOSURE_MATCH_KM (150 m) from a real splice gets pulled
