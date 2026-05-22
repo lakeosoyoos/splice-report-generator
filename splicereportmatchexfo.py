@@ -2669,7 +2669,6 @@ def scan_b_events(fibers_a, fibers_b, splices, threshold, existing_results, tota
 
 def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
                              bend_threshold=None, closure_match_km=None,
-                             nearest_tol_km=2.0,
                              fibers_b=None):
     """Every A-direction non-end event that was NOT covered by Pass 1 gets
     classified as a BEND or a BREAK/BROKE.  This replaces the old behaviour
@@ -2755,9 +2754,8 @@ def scan_a_standalone_events(fibers_a, splices, existing_results, total_span_a,
             if bend_ref_km is not None and abs(e['dist_km'] - bend_ref_km) <= cm:
                 continue
             # If very far from every closure, still bucket to the nearest
-            # one for display purposes (within nearest_tol_km).  Farther than
-            # that means the event lives between closures too far from any;
-            # still assign to the nearest column for visibility.
+            # one for display purposes.  The off-splice splitter will
+            # relocate it into its own bend/damage column later.
 
             # Already flagged by Pass 1 / Pass 2 at this closure position?
             key = (fnum, best_si)
