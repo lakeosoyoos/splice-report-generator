@@ -306,7 +306,7 @@ CUSTOMER_PROFILES = {
         "apply":      set(OTDR_DEFAULT_APPLY),
         "thresholds": {},
     },
-    "Customer A — strict": {
+    "Lumen": {
         "apply":      {"unidir_splice_loss", "bidir_splice_loss",
                         "bidir_connector_loss", "reflectance"},
         "thresholds": {
@@ -316,7 +316,7 @@ CUSTOMER_PROFILES = {
             "reflectance":          -50.0,
         },
     },
-    "Customer B — loose": {
+    "Zayo": {
         "apply":      {"bidir_splice_loss", "bidir_connector_loss"},
         "thresholds": {
             "bidir_splice_loss":     0.200,
