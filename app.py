@@ -290,16 +290,67 @@ OTDR_ROWS = [
 OTDR_DEFAULT_APPLY = {"unidir_splice_loss", "bidir_splice_loss",
                        "bidir_connector_loss", "reflectance"}
 
-# Initialise persisted settings on first run
+
+# ── Customer threshold profiles ──────────────────────────────────────
+# Each entry below is a named preset that overrides the per-row
+# 'fail' values and 'apply' flags above.  Pick one from the dropdown
+# at the top of the sidebar to switch.  To add a new customer, append
+# a dict here — the dropdown picks them up automatically.
+#
+# Keys inside each profile:
+#   apply       — set of row keys whose Apply checkbox should be ticked
+#   thresholds  — row_key -> fail value (any row not listed keeps the
+#                 OTDR_ROWS default)
+CUSTOMER_PROFILES = {
+    "Default (engine baseline)": {
+        "apply":      set(OTDR_DEFAULT_APPLY),
+        "thresholds": {},
+    },
+    "Customer A — strict": {
+        "apply":      {"unidir_splice_loss", "bidir_splice_loss",
+                        "bidir_connector_loss", "reflectance"},
+        "thresholds": {
+            "bidir_splice_loss":     0.120,
+            "unidir_splice_loss":    0.200,
+            "bidir_connector_loss":  0.400,
+            "reflectance":          -50.0,
+        },
+    },
+    "Customer B — loose": {
+        "apply":      {"bidir_splice_loss", "bidir_connector_loss"},
+        "thresholds": {
+            "bidir_splice_loss":     0.200,
+            "bidir_connector_loss":  0.600,
+        },
+    },
+    "Custom (edit table below)": {  # sentinel — uses session edits as-is
+        "apply":      None,
+        "thresholds": None,
+    },
+}
+
+
+def _otdr_settings_from_profile(profile_name: str) -> dict:
+    """Return a fresh otdr_settings dict for the named profile."""
+    prof = CUSTOMER_PROFILES.get(profile_name) or {}
+    apply_set    = prof.get("apply")
+    overrides    = prof.get("thresholds") or {}
+    out = {}
+    for key, _, fail_default, _, _ in OTDR_ROWS:
+        fail = float(overrides.get(key, fail_default))
+        applied = ((apply_set is not None and key in apply_set)
+                    if apply_set is not None
+                    else (key in OTDR_DEFAULT_APPLY))
+        out[key] = {"apply": applied, "fail": fail, "warning": fail}
+    return out
+
+
+# Initialise persisted settings + active profile on first run
+if "otdr_profile" not in st.session_state:
+    st.session_state.otdr_profile = next(iter(CUSTOMER_PROFILES))
 if "otdr_settings" not in st.session_state:
-    st.session_state.otdr_settings = {
-        key: {
-            "apply":   key in OTDR_DEFAULT_APPLY,
-            "fail":    fail,
-            "warning": fail,        # Warning column captured visually; engine uses Fail only
-        }
-        for key, _, fail, _, _ in OTDR_ROWS
-    }
+    st.session_state.otdr_settings = _otdr_settings_from_profile(
+        st.session_state.otdr_profile)
 
 with st.sidebar:
     # Every engine threshold the user can't reach via the OTDR panel
@@ -341,6 +392,31 @@ with st.sidebar:
     </style>
     """, unsafe_allow_html=True)
 
+    # ── Customer profile dropdown ─────────────────────────────────
+    # Picking a customer rewrites session_state.otdr_settings with
+    # that customer's preset and re-mounts the component (a fresh
+    # key= forces it to re-render with the new initials).
+    st.markdown("**Customer profile**")
+    _profile_names = list(CUSTOMER_PROFILES.keys())
+    _cur = st.session_state.get("otdr_profile", _profile_names[0])
+    _picked = st.selectbox(
+        "Customer",
+        _profile_names,
+        index=_profile_names.index(_cur) if _cur in _profile_names else 0,
+        label_visibility="collapsed",
+        key="otdr_profile_select",
+        help=("Each profile selects a different bundle of Apply / Fail "
+              "values for the OTDR settings table below.  Pick 'Custom' "
+              "to keep your own manual edits."),
+    )
+    # If the user just changed the profile, reload the table from
+    # that profile's preset (unless they picked 'Custom').
+    if _picked != _cur:
+        st.session_state.otdr_profile = _picked
+        if "Custom" not in _picked:
+            st.session_state.otdr_settings = _otdr_settings_from_profile(_picked)
+        st.rerun()
+
     # Build the rows definition for the component.  Each row's initial
     # values come from session_state (the user's last-committed
     # settings); the supported flag tells the component whether to
@@ -355,10 +431,12 @@ with st.sidebar:
         }
         for key, label, _fail, unit, supported in OTDR_ROWS
     ]
+    # Component key encodes the active profile so switching customers
+    # forces a re-mount with the new initial values.
     _commit = otdr_settings_component(
         _otdr_rows_for_component,
         default=None,
-        key="otdr_component",
+        key=f"otdr_component::{st.session_state.otdr_profile}",
     )
     if _commit:
         # User clicked Apply settings inside the component — persist
