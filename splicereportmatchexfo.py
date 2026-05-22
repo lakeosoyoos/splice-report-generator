@@ -799,21 +799,47 @@ def discover_splices(fibers_a):
             bins[bk].append(e['dist_km'])
 
     # Population gate: a km bucket must clear BOTH an absolute floor
-    # (MIN_POP_SPLICE) and a fractional floor (MIN_POP_FRACTION × total
-    # fibers).  Real splice closures show 60-75% population coverage on
-    # well-shot spans; phantom one-fiber bends sit at <10%.  The
-    # fractional gate eliminates the phantoms cleanly.  Per tech rule:
-    # every fiber gets spliced at every closure (a fiber that's broken
-    # short of a closure doesn't contribute, but those are few — the
-    # ratio still separates real from phantom by a wide margin).
-    n_fibers_total = len(fibers_a)
-    min_count = max(MIN_POP_SPLICE,
-                    int(round(n_fibers_total * MIN_POP_FRACTION)))
+    # (MIN_POP_SPLICE) and a fractional floor (MIN_POP_FRACTION × N).
+    # Real splice closures show 60-75% population coverage on
+    # well-shot spans; phantom one-fiber bends sit at <10%.
+    #
+    # N here is the count of fibers that physically REACH this km — not
+    # the cable-wide fiber count.  On heavily damaged spans where 70 %
+    # of fibers break upstream of a closure, the surviving 30 % still
+    # splice normally — but if we tested against the cable-wide count,
+    # the gate would require 25 % of ALL fibers (i.e. ~83 % of the
+    # survivors) and the closure would silently fail to be discovered.
+    # Testing against the surviving population keeps the gate honest.
+    #
+    # Each fiber's "reach" is the position of its last non-end event
+    # (i.e. how far its OTDR trace got before terminating).  A fiber
+    # contributes to the reach count for every bin at or below that
+    # position.
+    fiber_reach = {}
+    for fnum, r in fibers_a.items():
+        max_km = 0.0
+        for e in r['events']:
+            if e.get('is_end'):
+                continue
+            if e['dist_km'] > max_km:
+                max_km = e['dist_km']
+        fiber_reach[fnum] = max_km
+
     splices = []
     for bk in sorted(bins.keys()):
-        if len(bins[bk]) < min_count: continue
+        n_reaching = sum(1 for km in fiber_reach.values() if km >= bk)
+        # Absolute floor (MIN_POP_SPLICE) prevents tiny reach populations
+        # from waving phantom one-fiber clusters through.
+        min_count = max(MIN_POP_SPLICE,
+                        int(round(n_reaching * MIN_POP_FRACTION)))
+        if len(bins[bk]) < min_count:
+            continue
         avg_pos = round(np.mean(bins[bk]), 2)
-        splices.append({'bin': bk, 'position_km': avg_pos, 'count': len(bins[bk])})
+        splices.append({
+            'bin': bk, 'position_km': avg_pos,
+            'count': len(bins[bk]),
+            'reach_count': n_reaching,
+        })
 
     # Merge bins within 1 km of each other
     merged = []
@@ -1022,10 +1048,21 @@ def refine_closure_centers(fibers_a, splices, validate=True,
                 per_ribbon_refined[rib_idx] = float(np.median(arr_r))
         sp['position_km_refined_by_ribbon'] = per_ribbon_refined
 
-        # Tightness: fraction of fibers whose event is within ±CLOSURE_MATCH_KM
+        # Tightness: fraction of REACHING fibers whose event is within
+        # ±CLOSURE_MATCH_KM.  We use the count of fibers that physically
+        # reach this km — not the total cable population — so a closure
+        # deep into a heavily damaged span isn't penalized for the fibers
+        # that broke before they got here.  See discover_splices for the
+        # equivalent change to the population gate.
         tight_mask = np.abs(arr - refined) < CLOSURE_MATCH_KM
         tight_count = int(tight_mask.sum())
-        sp['tight_frac'] = tight_count / float(n_fibers_total)
+        n_reaching_here = sum(
+            1 for r in fibers_a.values()
+            if any((not e.get('is_end')) and e['dist_km'] >= sp_pos
+                    for e in r.get('events', []))
+        ) or n_fibers_total  # fallback if computation yields zero
+        sp['tight_frac'] = tight_count / float(n_reaching_here)
+        sp['reach_count'] = n_reaching_here
         # Use std within the tight zone for the quality check
         tight_std_m = float(np.std(arr[tight_mask])) * 1000 if tight_count > 3 else 999.0
         sp['tight_std_m'] = tight_std_m
