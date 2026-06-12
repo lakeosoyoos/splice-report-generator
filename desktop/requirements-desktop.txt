@@ -1,0 +1,31 @@
+# Splice Report — desktop build requirements
+# =============================================
+# Install order matters.  The CI workflow also re-runs the setuptools
+# pin LAST so it wins against transitive bumps; see build-windows.yml.
+
+# 1. The setuptools pin — MUST be exactly 65.5.1.  Newer setuptools makes
+#    pkg_resources strict and crashes the frozen exe at launch with
+#    "InvalidVersion: '.../SpliceReport'".  This is co-pinned with
+#    Python 3.11 (see SpliceReport.spec comment block).
+setuptools==65.5.1
+
+# 2. pkg_resources' vendored packages, installed as REAL top-level packages
+#    so its extern-importer has a working fallback at runtime.  Without
+#    these, the frozen exe dies with "the jaraco package is required".
+jaraco.text
+jaraco.functools
+jaraco.context
+more-itertools
+packaging
+platformdirs
+appdirs
+ordered-set
+
+# 3. App runtime — same versions the Streamlit Cloud web app uses.
+streamlit>=1.50.0
+numpy>=2.0.0
+openpyxl>=3.1.0
+reportlab>=4.0.0
+
+# 4. Build tool
+pyinstaller>=6.0.0
