@@ -107,6 +107,42 @@ How a tech installs and uses the app
      "splice_report_output" subfolder next to the A folder, and a
      Download button appears.
 
+Test suite layout
+-----------------
+  desktop/test_ui.py
+      Original widget-state smoke tests (commit 224dae0 regression).
+      Run directly:  python desktop/test_ui.py
+  desktop/tests/
+      Pytest-style suite, run with:  python -m pytest desktop/tests/ -v
+      conftest.py           Shared scaffolding — exports APP_PATH,
+                            FIXTURE_A_DIR, FIXTURE_B_DIR, run_streamlit.
+                            Every new test should reach for these
+                            instead of rebuilding AppTest plumbing.
+      fixtures/             Tiny real OTDR span (12+12 SOR files,
+                            ~2.3 MB).  See fixtures/README.txt for
+                            provenance.  Don't edit the SOR files.
+      test_e2e_generate.py  End-to-end "Generate report" test.  Drives
+                            the entire engine pipeline through the UI
+                            and asserts on the written workbook.  This
+                            is the test that catches signature drift
+                            between desktop_app.py and the engine — the
+                            class of bug that shipped in commit e1d5692
+                            ("too many values to unpack" at the
+                            detect_launch_issues call site).
+  CI runs both suites BEFORE the PyInstaller build (see
+  .github/workflows/build-windows.yml) so a UI regression fails fast
+  without burning the 3-minute bundle.
+
+  Adding a new test
+  -----------------
+  Drop a test_*.py file into desktop/tests/.  Import APP_PATH /
+  FIXTURE_A_DIR / FIXTURE_B_DIR / run_streamlit from conftest, and
+  trigger Generate (if you need it) by setting
+  session_state["__test_force_generate__"] = True before at.run().
+  Don't simulate a click on the "Generate report" button directly;
+  AppTest's primary-button click API is flaky.
+
+
 Each launch checks GitHub for a newer engine + UI and uses it if
 download succeeds.  No internet → falls back to the version bundled in
 the exe.  Engine fixes you push to main reach techs on their next

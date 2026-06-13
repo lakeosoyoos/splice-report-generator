@@ -64,6 +64,21 @@ jobs:
         run: |
           python test_ui.py
 
+      # ── UI E2E TEST (Generate flow) ────────────────────────────────
+      # Drives the entire "Generate report" code path through AppTest
+      # against the tiny fixture span in desktop/tests/fixtures/.
+      # Catches signature drift between desktop_app.py and the engine —
+      # the class of bug that shipped in commit e1d5692
+      # ("ValueError: too many values to unpack" at the
+      # detect_launch_issues call site).  Runs BEFORE the PyInstaller
+      # build for the same fail-fast reason as the smoke test above.
+      - name: UI E2E test (Generate flow)
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+        run: |
+          python -m pytest tests/test_e2e_generate.py -v
+
       - name: PyInstaller build
         run: |
           if (Test-Path build) { Remove-Item -Recurse -Force build }

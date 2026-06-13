@@ -573,6 +573,16 @@ run = st.button(
     use_container_width=True,
     disabled=not (inv_a and inv_b),
 )
+# ── Test hook ─────────────────────────────────────────────────────────
+# AppTest's button-click API is flaky for type="primary" buttons, so the
+# end-to-end test (desktop/tests/test_e2e_generate.py) sets a magic
+# session-state flag instead.  This branch is a no-op in production —
+# real users never set that key, and the UI is unchanged.
+if st.session_state.get("__test_force_generate__", False):
+    run = True
+    # Reset so the next AppTest.run() (e.g. a re-render after Generate
+    # finishes) doesn't trigger Generate again in a loop.
+    st.session_state["__test_force_generate__"] = False
 
 
 def _apply_overrides(thresholds):

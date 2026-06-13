@@ -29,3 +29,9 @@ reportlab>=4.0.0
 
 # 4. Build tool
 pyinstaller>=6.0.0
+
+# 5. Test runner — pinned explicitly so the CI E2E test step
+#    (desktop/tests/test_e2e_generate.py) runs deterministically.
+#    Streamlit pulls pytest transitively, but we don't want to rely on
+#    that staying true.
+pytest>=7.0.0
