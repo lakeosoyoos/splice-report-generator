@@ -78,7 +78,7 @@ def _run_smoke() -> int:
                 f"expected '/tmp/__pretend_b__'")
 
     # ─── Test 2: invalid path surfaces a clear error ───────────────
-    print("[test_ui] Test 2: invalid path → visible error")
+    print("[test_ui] Test 2: invalid path -> visible error")
     at = AppTest.from_file(str(HERE / "desktop_app.py"), default_timeout=30)
     at.session_state["dir_a_input"] = "/this/path/does/not/exist/anywhere"
     at.run()
@@ -92,8 +92,8 @@ def _run_smoke() -> int:
                 f"  test2: expected an st.error mentioning the bad "
                 f"path; got errors={error_msgs}")
 
-    # ─── Test 3: real folder with a valid SOR → success ────────────
-    print("[test_ui] Test 3: real folder w/ valid SOR → success message")
+    # ─── Test 3: real folder with a valid SOR -> success ────────────
+    print("[test_ui] Test 3: real folder w/ valid SOR -> success message")
     # Find any one valid SOR from disk to point the test at.  In CI we
     # checkout the repo but Lagrande↔Durkey isn't checked in, so make a
     # tiny stub file with the SR-4731 'Map\x00' header.  The

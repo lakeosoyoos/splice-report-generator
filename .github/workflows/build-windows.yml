@@ -55,6 +55,12 @@ jobs:
       # without burning the 3-minute bundle.
       - name: UI smoke test (AppTest)
         shell: pwsh
+        env:
+          # Force UTF-8 stdout — windows-latest defaults to cp1252 and
+          # any non-ASCII char in a print() or failure message crashes
+          # the test before it can report.  We learned this the hard
+          # way on run 27469735282 (the test crashed on '->' arrow).
+          PYTHONIOENCODING: utf-8
         run: |
           python test_ui.py
 
