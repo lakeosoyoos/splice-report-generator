@@ -9,56 +9,63 @@
 #  NOT prove the Windows app launches; the Windows CI BOOT SELF-TEST remains
 #  the only authoritative check for what the tech downloads.
 #
-#  Requires Python 3.11 (NOT 3.12 or newer — see SpliceReport.spec for why).
-#  Uses the portable Python interpreter at desktop/.python311/python/bin/
-#  python3.11 that the install script left behind; falls back to a system
-#  python3.11 if that's missing.
+#  PYTHON CHOICE — uses the Mac's built-in /usr/bin/python3 (currently 3.9.x).
+#  Same interpreter Secret Sauce was built with.  Any Python BELOW 3.12 works
+#  because we pin setuptools==65.5.1, and 3.12 removed pkgutil.ImpImporter
+#  which that setuptools relies on.  If you ever build on 3.12+ you'd hit the
+#  same ImpImporter crash we already documented on Windows — don't.
+#
+#  Build deps are installed into the user site (~/Library/Python/3.9/...)
+#  via `python3 -m pip install --user`, NOT a venv.  Matches the Secret
+#  Sauce pattern and keeps the build reproducible on any Mac.
 # =============================================================================
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$HERE"
 
-# ── 1. Find Python 3.11 ──────────────────────────────────────────────────────
-PORTABLE_PY="$HERE/.python311/python/bin/python3.11"
-if [[ -x "$PORTABLE_PY" ]]; then
-    PY="$PORTABLE_PY"
-elif command -v python3.11 >/dev/null 2>&1; then
-    PY="$(command -v python3.11)"
-else
-    echo "[build-mac] ERROR — Python 3.11 not found." >&2
-    echo "             Install the portable interpreter (see README_BUILD.txt)" >&2
-    echo "             or install Python 3.11 system-wide and re-run." >&2
+PY="/usr/bin/python3"
+if [[ ! -x "$PY" ]]; then
+    echo "[build-mac] ERROR — /usr/bin/python3 missing." >&2
+    echo "             macOS ships it by default.  Reinstall the Command Line Tools" >&2
+    echo "             with:  xcode-select --install" >&2
     exit 1
 fi
-echo "[build-mac] Using: $PY"
-"$PY" --version
+PY_VER=$("$PY" --version 2>&1)
+echo "[build-mac] Using: $PY ($PY_VER)"
 
-# ── 2. Fresh venv ────────────────────────────────────────────────────────────
-VENV="$HERE/.venv-mac"
-if [[ -d "$VENV" ]]; then
-    echo "[build-mac] Removing old $VENV ..."
-    rm -rf "$VENV"
+# Guardrail: refuse to build on 3.12+.  See header comment for why.
+if "$PY" -c "import sys; sys.exit(0 if sys.version_info < (3, 12) else 1)"; then
+    : # ok
+else
+    echo "[build-mac] ERROR — $PY_VER is 3.12+ which removed pkgutil.ImpImporter." >&2
+    echo "             setuptools 65.5.1 (our pinned version) needs it at boot." >&2
+    echo "             Use a Python < 3.12, or rebuild the toolchain to use a" >&2
+    echo "             newer setuptools.  Don't ship a 3.12 .app — it will crash" >&2
+    echo "             at launch the same way the Windows builds did." >&2
+    exit 1
 fi
-"$PY" -m venv "$VENV"
-# shellcheck disable=SC1091
-source "$VENV/bin/activate"
-python -m pip install --upgrade pip wheel
 
-# ── 3. Install deps + re-pin setuptools 65.5.1 LAST ──────────────────────────
-pip install -r requirements-desktop.txt
-pip install --force-reinstall "setuptools==65.5.1"
+# ── 1. Install build deps into the user site (idempotent) ────────────────────
+# Same pattern Secret Sauce uses.  --user lands at ~/Library/Python/3.9/...
+"$PY" -m pip install --user --upgrade pip wheel >/dev/null
+"$PY" -m pip install --user -r requirements-desktop.txt
+"$PY" -m pip install --user --force-reinstall "setuptools==65.5.1"
 
-# ── 4. PyInstaller build ─────────────────────────────────────────────────────
+# Put the user-site bin on PATH so the pyinstaller entrypoint resolves.
+USER_BIN="$("$PY" -m site --user-base)/bin"
+export PATH="$USER_BIN:$PATH"
+
+# ── 2. PyInstaller build ─────────────────────────────────────────────────────
 rm -rf build dist
-pyinstaller SpliceReport-mac.spec --noconfirm --clean
+"$PY" -m PyInstaller SpliceReport-mac.spec --noconfirm --clean
 
 if [[ ! -d "dist/SpliceReport.app" ]]; then
     echo "[build-mac] ERROR — dist/SpliceReport.app missing after PyInstaller." >&2
     exit 1
 fi
 
-# ── 5. Refresh the .app on the Desktop ──────────────────────────────────────
+# ── 3. Refresh the .app on the Desktop ──────────────────────────────────────
 DEST="$HOME/Desktop/SpliceReport.app"
 if [[ -d "$DEST" ]]; then
     echo "[build-mac] Replacing existing $DEST ..."

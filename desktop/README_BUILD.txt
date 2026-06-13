@@ -60,6 +60,25 @@ Local build (Windows machine)
   pass/fail, push to GitHub and let CI run the boot self-test.
 
 
+Local Mac build (preview / de-risk only — not for techs)
+--------------------------------------------------------
+  1. Use the system /usr/bin/python3 (currently 3.9.x).  Same interpreter
+     the Secret Sauce Mac app was built with.  Any Python BELOW 3.12
+     works because setuptools 65.5.1 needs pkgutil.ImpImporter which 3.12
+     removed.  DO NOT install 3.11/3.12 for this build.
+  2. From this folder, run:  ./build-mac.sh
+     The script installs build deps into ~/Library/Python/3.9/... (via
+     --user), runs PyInstaller against SpliceReport-mac.spec, and drops
+     SpliceReport.app onto ~/Desktop.
+  3. Double-click ~/Desktop/SpliceReport.app.  On a fresh machine
+     Gatekeeper says "cannot be opened because it is from an unidentified
+     developer" — right-click → Open → Open (one-time), or strip the
+     quarantine bit:  xattr -dr com.apple.quarantine ~/Desktop/SpliceReport.app
+  This Mac .app is the MAINTAINER's local preview.  Techs get the
+  Windows build, and only the Windows CI boot self-test verifies that
+  build.  Don't ship the .app.
+
+
 Dev run (Mac / Linux / Windows — no packaging)
 ----------------------------------------------
   pip install -r requirements-desktop.txt

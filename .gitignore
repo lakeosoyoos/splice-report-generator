@@ -8,3 +8,4 @@ desktop/.python311/
 desktop/.venv-mac/
 desktop/build/
 desktop/dist/
+desktop/__pycache__/
