@@ -84,6 +84,7 @@ REQUIREMENTS
 """
 
 import os
+import re
 import sys
 import argparse
 from collections import defaultdict
@@ -675,11 +676,35 @@ def _enhance_events_with_trace(fiber_result, expected_span_km, ior=None, pop_noi
 # ═══════════════════════════════════════════════════════════════════════
 
 def _extract_fiber_num(fn):
-    """Extract fiber number from a SOR/JSON filename (digits only)."""
-    base = fn.split('.')[0].split(' ')[0]  # strip extension and trailing space
-    base = base.split('_')[0]
-    digits = ''.join(c for c in base if c.isdigit())
-    return int(digits) if digits else None
+    """Extract fiber number from a SOR/JSON filename.
+
+    Handles the common naming patterns we see in the field:
+      ``LAGDUR0001.sor``                  -> 1     (run after a prefix)
+      ``Norsea001_1550.sor``              -> 1     (strip _<wavelength> first)
+      ``Seattle to Spokane d.0431.sor``   -> 431   (rightmost digit run)
+      ``20260520_LAGDUR0001.sor``         -> 1     (rightmost run beats date)
+      ``fiber 17.json``                   -> 17
+
+    Rule: strip the file extension, strip a trailing wavelength suffix
+    (``_1310`` / ``_1490`` / ``_1550`` / ``_1625``, also ``-`` or `` `` or
+    ``.`` separators), then take the RIGHTMOST run of digits.  Real-world
+    OTDR file naming puts the fiber number last (after any cable / span /
+    date prefix), so the rightmost digit run is the right answer in
+    every case I've seen.
+
+    The earlier implementation took ``fn.split('.')[0]`` first, which
+    silently dropped any name that put the fiber number AFTER a dot
+    infix — e.g. ``Seattle...d.0431.sor`` reduced to ``Seattle``,
+    no digits, fiber None, "Loaded zero fibers from the A-direction
+    upload."  Reported by a tech on a Seattle span on 2026-06-13.
+    """
+    stem, _ = os.path.splitext(fn)
+    # Strip a trailing wavelength code (with any common separator).
+    stem = re.sub(r'[\s_\-.](?:850|1300|1310|1490|1550|1625)$', '', stem)
+    matches = re.findall(r'\d+', stem)
+    if not matches:
+        return None
+    return int(matches[-1])
 
 
 def _dir_has_json(d):
