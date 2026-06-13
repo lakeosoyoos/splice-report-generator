@@ -45,6 +45,19 @@ jobs:
         run: |
           pip install --force-reinstall "setuptools==65.5.1"
 
+      # ── UI SMOKE TEST ──────────────────────────────────────────────
+      # Runs the desktop_app.py through Streamlit's AppTest harness and
+      # checks the widget-state plumbing that bit us in commit 224dae0
+      # ("dialog opens but path doesn't stick" — picker wrote to a
+      # different session_state slot than the text_input read from).
+      # Static + behavioral checks; no browser, no .exe, ~10 s.  Runs
+      # BEFORE the PyInstaller build so a UI regression fails fast
+      # without burning the 3-minute bundle.
+      - name: UI smoke test (AppTest)
+        shell: pwsh
+        run: |
+          python test_ui.py
+
       - name: PyInstaller build
         run: |
           if (Test-Path build) { Remove-Item -Recurse -Force build }
