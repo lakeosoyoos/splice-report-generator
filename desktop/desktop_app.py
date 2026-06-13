@@ -632,8 +632,17 @@ if run:
         )
 
         prog.progress(0.50, text="Detecting launch issues…")
+        # detect_launch_issues returns a SINGLE dict keyed by fiber number
+        # ({fnum: launch_issue_dict}), not a per-direction (A, B) tuple —
+        # see the same call site in app.py.  The earlier desktop version
+        # tried to unpack the dict into two variables, which iterates the
+        # dict's keys and raised "too many values to unpack (expected 2)".
+        # `span_km` was also being silently swallowed; the engine uses
+        # first_splice_km.
+        first_splice_km = splices[0]["position_km"] if splices else None
         with redirect_stdout(log_buf):
-            launch_a, launch_b = detect_launch_issues(fa, fb, span_km=span_km)
+            launch_issues = detect_launch_issues(
+                fa, fb, first_splice_km=first_splice_km)
 
         prog.progress(0.60, text="Pass 1 — bidirectional analysis…")
         with redirect_stdout(log_buf):
@@ -678,7 +687,7 @@ if run:
             cells, la, lb = build_ribbon_data(
                 all_results, n_fibers, int(engine.RIBBON_SIZE),
                 len(splices),
-                launch_issues={"A": launch_a, "B": launch_b},
+                launch_issues=launch_issues,
             )
             write_xlsx(cells, splices, n_fibers, int(engine.RIBBON_SIZE),
                         xlsx_path,
