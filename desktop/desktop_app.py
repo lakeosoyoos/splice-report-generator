@@ -10,7 +10,7 @@ ever leaves the machine.
 Boot order:
     launcher.exe → boots Streamlit headless → opens browser tab → this
     script runs.  The launcher pre-seeds STREAMLIT_SERVER_HEADLESS=true
-    and binds to 127.0.0.1:8501 only.
+    and binds to 127.0.0.1:8503 only (Secret Sauce holds 8501).
 """
 from __future__ import annotations
 

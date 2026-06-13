@@ -103,7 +103,7 @@ jobs:
               break
             }
             try {
-              $r = Invoke-WebRequest -Uri "http://127.0.0.1:8501/_stcore/health" `
+              $r = Invoke-WebRequest -Uri "http://127.0.0.1:8503/_stcore/health" `
                                       -UseBasicParsing -TimeoutSec 2
               if ($r.Content.Trim() -eq "ok") {
                 $ok = $true

@@ -45,7 +45,13 @@ from pathlib import Path
 APP_NAME       = "SpliceReport"
 APP_DIR_NAME   = ".spliceReport"
 HOST           = "127.0.0.1"
-PORT           = 8501
+# Each desktop app must claim its OWN port so the launchers don't see
+# each other's running server via /_stcore/health and silently open
+# the wrong app.  Secret Sauce holds 8501; SpliceReport runs on 8503
+# (8502 is Streamlit's first-port fallback so we skip it).  A tech who
+# already has Secret Sauce running can now double-click SpliceReport
+# and get SpliceReport — not Secret Sauce.
+PORT           = 8503
 HEALTH_URL     = f"http://{HOST}:{PORT}/_stcore/health"
 APP_URL        = f"http://{HOST}:{PORT}"
 GH_OWNER       = "lakeosoyoos"
