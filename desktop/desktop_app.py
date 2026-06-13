@@ -58,6 +58,59 @@ from splicereportmatchexfo import (  # noqa: E402
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+#  Custom EXFO-styled OTDR panel — safety net then import
+# ─────────────────────────────────────────────────────────────────────────────
+# The component's __init__.py resolves `index.html` via os.path.dirname(__file__).
+# In dev mode that's the repo's components/ folder; in the frozen exe it's
+# either ~/.spliceReport/engine/components/otdr_settings/ (auto-update path)
+# or the PyInstaller _MEIPASS bundle dir (fallback).
+#
+# The realistic failure mode is "auto-update wrote __init__.py but the HTML
+# fetch failed for index.html" — the iframe then loads a 404 and the panel
+# goes blank with no error.  This safety net copies the HTML from a known-
+# good bundled location into the same directory as __init__.py before the
+# component is declared, so declare_component() always sees an HTML file.
+def _ensure_component_html() -> None:
+    try:
+        import components.otdr_settings as _comp  # noqa: F401
+        comp_dir = Path(_comp.__file__).resolve().parent
+    except Exception:
+        return  # import failure surfaces normally below
+    expected_html = comp_dir / "index.html"
+    if expected_html.exists() and expected_html.stat().st_size > 0:
+        return
+    # Search the bundled / repo locations for a fallback copy.
+    candidates = [
+        Path(_HERE).parent / "components" / "otdr_settings" / "index.html",
+        Path(_REPO_ROOT) / "components" / "otdr_settings" / "index.html",
+    ]
+    # PyInstaller _MEIPASS (when frozen)
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        candidates.append(Path(meipass) / "components" / "otdr_settings"
+                          / "index.html")
+    for src in candidates:
+        if src.exists() and src.stat().st_size > 0:
+            try:
+                expected_html.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, expected_html)
+                return
+            except OSError:
+                continue
+    # If we couldn't recover, the panel will render blank — let the user
+    # know via a visible error rather than a silent empty space.
+    st.error(
+        f"OTDR settings panel HTML is missing at {expected_html}. "
+        "The desktop app couldn't auto-download it and no bundled copy "
+        "was reachable.  Restart with internet to retry, or reinstall."
+    )
+
+
+_ensure_component_html()
+from components.otdr_settings import otdr_settings as otdr_settings_component  # noqa: E402
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 #  Page config
 # ─────────────────────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -263,28 +316,48 @@ with st.sidebar:
             st.session_state.otdr_settings = _settings_from_profile(_picked)
         st.rerun()
 
+    # Widen the sidebar so the EXFO-styled table fits cleanly, same as web.
+    st.markdown("""
+    <style>
+      section[data-testid="stSidebar"],
+      section[data-testid="stSidebar"][aria-expanded="true"] {
+        width: 620px !important;
+        min-width: 620px !important;
+        max-width: 620px !important;
+      }
+      section[data-testid="stSidebar"] > div {
+        width: 620px !important;
+        min-width: 620px !important;
+      }
+    </style>
+    """, unsafe_allow_html=True)
+
     st.markdown("---")
-    st.markdown("**OTDR thresholds**")
-    for key, label, default, unit, supported in OTDR_ROWS:
-        row = st.session_state.otdr_settings[key]
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            row["apply"] = st.checkbox(
-                label + ("" if supported else "  (not wired)"),
-                value=bool(row["apply"]),
-                key=f"apply_{key}",
-                disabled=not supported,
-            )
-        with c2:
-            row["fail"] = float(st.number_input(
-                f"Fail ({unit})",
-                value=float(row["fail"]),
-                step=(0.001 if unit == "dB" else 1.0),
-                format=("%.3f" if unit == "dB" else "%.4f"),
-                key=f"fail_{key}",
-                label_visibility="collapsed",
-                disabled=not supported or not row["apply"],
-            ))
+    # ── EXFO-styled OTDR settings panel (same component as the web app) ──
+    _otdr_rows_for_component = [
+        {
+            "key":       key,
+            "label":     label,
+            "unit":      unit,
+            "supported": supported,
+            "initial":   st.session_state.otdr_settings[key],
+        }
+        for key, label, _fail, unit, supported in OTDR_ROWS
+    ]
+    # Component key encodes the active profile so switching customers
+    # forces a re-mount with the new initial values.
+    _commit = otdr_settings_component(
+        _otdr_rows_for_component,
+        default=None,
+        key=f"otdr_component::{st.session_state.otdr_profile}",
+    )
+    if _commit:
+        for key, vals in _commit.items():
+            st.session_state.otdr_settings[key] = {
+                "apply":   bool(vals.get("apply")),
+                "fail":    float(vals.get("fail", 0.0)),
+                "warning": float(vals.get("warning", 0.0)),
+            }
 
 # Read overrides for the engine
 otdr = st.session_state.otdr_settings
