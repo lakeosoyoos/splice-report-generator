@@ -1,30 +1,22 @@
 # -*- mode: python ; coding: utf-8 -*-
 #
-# PyInstaller spec for the Splice Report desktop app (Windows).
+# PyInstaller spec for the Splice Report desktop app (macOS).
+# IDENTICAL to SpliceReport.spec (Windows) except for the trailing
+# BUNDLE() step that turns the COLLECT directory into a real
+# double-clickable .app.  Read the comment block at the top of
+# SpliceReport.spec for the toolchain pins and the reason every one
+# matters.
 #
-# CRITICAL TOOLCHAIN — DO NOT CHANGE WITHOUT READING THIS FIRST:
-#   * Build with Python 3.11 (NOT 3.12 or newer).  We pin setuptools 65.5.1
-#     below; that version's pkg_resources uses pkgutil.ImpImporter, which
-#     Python 3.12 REMOVED.  On 3.12 the packaged exe crashes at launch with
-#     "module 'pkgutil' has no attribute 'ImpImporter'".
-#   * setuptools must be EXACTLY 65.5.1, installed LAST in
-#     requirements-desktop.txt.  Newer setuptools makes pkg_resources strict
-#     and crashes the packaged exe with "InvalidVersion: '.../SpliceReport'".
-#   * pkg_resources' vendored jaraco / packaging / platformdirs / appdirs /
-#     more_itertools packages are bundled THREE WAYS:
-#         (a) collect_submodules("pkg_resources") + collect_submodules(
-#             "setuptools") + collect_data_files("pkg_resources")
-#         (b) installed as REAL top-level packages by requirements-desktop.txt
-#         (c) collect_all() in a try/except for each, plus listed in
-#             hiddenimports as belt-and-suspenders.
-#
-# A green PyInstaller build tells you NOTHING about whether the exe boots.
-# Every one of our broken builds compiled cleanly.  The ONLY proof is the
-# CI boot self-test in .github/workflows/build-windows.yml.  Treat a green
-# build with a missing or failing boot test as broken.
+# This Mac build is for local de-risking only — it flushes
+# OS-independent packaging bugs (missing hiddenimports for our own
+# modules, the setuptools 65.5.1 pin, the Streamlit first-run prompt
+# hang) before we burn a Windows CI cycle.  A green Mac build does
+# NOT prove the Windows app launches: different OS, the host may have
+# vendored packages installed incidentally.  The Windows CI BOOT
+# SELF-TEST in build-windows.yml remains the only authoritative
+# check for what the tech downloads.
 
 import os
-import sys
 from PyInstaller.utils.hooks import (
     collect_all, collect_submodules, collect_data_files,
 )
@@ -38,8 +30,6 @@ block_cipher = None
 
 # ─── Heavy shells we want to fully bundle ─────────────────────────────
 _to_collect = ["streamlit", "altair", "numpy", "openpyxl", "reportlab"]
-# pyarrow / pandas are not direct deps; skip unless they sneak in via
-# streamlit transitives — collect_all handles missing ones gracefully.
 _optional = ["pyarrow", "pandas", "matplotlib", "scipy"]
 
 datas, binaries, hiddenimports = [], [], []
@@ -51,7 +41,6 @@ for name in _to_collect + _optional:
         binaries += b
         hiddenimports += h
     except Exception as e:
-        # An optional package that isn't installed → ignore.
         print(f"[spec] skip collect_all({name}): {e}")
 
 
@@ -62,7 +51,7 @@ datas += collect_data_files("pkg_resources")
 
 
 # ─── (c) collect_all the vendored packages even though they're also
-#         installed as top-level (b in requirements).  Belt-and-suspenders.
+#         installed as top-level (b in requirements-desktop.txt).
 for name in ("jaraco.text", "jaraco.functools", "jaraco.context",
              "more_itertools", "packaging", "platformdirs", "appdirs",
              "ordered_set"):
@@ -77,19 +66,12 @@ for name in ("jaraco.text", "jaraco.functools", "jaraco.context",
 
 # ─── Explicit hidden imports ──────────────────────────────────────────
 hiddenimports += [
-    # Engine and UI live next to the launcher; the runtime sys.path tweak
-    # is enough to find them, but listing them here makes PyInstaller pull
-    # them in as Python modules so they're always available.
     "splicereportmatchexfo",
     "sor_reader324802a",
     "json_reader",
     "components.otdr_settings",
-    # Folder picker — wrapped in try/except in desktop_app.py but Tk and
-    # filedialog can be missed by PyInstaller's auto-detection on
-    # Windows.
     "tkinter",
     "tkinter.filedialog",
-    # Streamlit internals that get loaded via dynamic dispatch.
     "streamlit.web.cli",
     "streamlit.runtime",
     "streamlit.runtime.scriptrunner.magic_funcs",
@@ -97,23 +79,19 @@ hiddenimports += [
 
 
 # ─── Bundle our own .py + the custom HTML component ───────────────────
-# Engine
 datas += [(os.path.join(REPO_ROOT, "splicereportmatchexfo.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "sor_reader324802a.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "json_reader.py"), ".")]
-# Custom component (the Streamlit component_v1 declare_component looks
-# for the HTML next to the __init__.py)
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",
                          "__init__.py"),
             "components/otdr_settings")]
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",
                          "index.html"),
             "components/otdr_settings")]
-# Desktop UI (loaded by the launcher when no fresh download is available)
 datas += [(os.path.join(SPEC_DIR, "desktop_app.py"), "desktop")]
 
 
-# ─── Excludes — large native-lib PDF engines we don't use ────────────
+# ─── Excludes ─────────────────────────────────────────────────────────
 excludes = ["weasyprint", "cairocffi", "pango", "gobject", "PyQt5", "PyQt6",
              "PySide2", "PySide6"]
 
@@ -145,8 +123,8 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,           # UPX corrupts some PyInstaller bootloaders on Windows.
-    console=False,       # WINDOWED — no command-prompt window pops up.
+    upx=False,
+    console=False,           # WINDOWED — no Terminal popup on launch.
     disable_windowed_traceback=False,
     target_arch=None,
     codesign_identity=None,
@@ -163,4 +141,23 @@ coll = COLLECT(
     upx=False,
     upx_exclude=[],
     name=APP_NAME,
+)
+
+
+# ─── BUNDLE: wrap the COLLECT into a real .app on macOS ──────────────
+app = BUNDLE(
+    coll,
+    name=f"{APP_NAME}.app",
+    icon=None,                       # drop a .icns here to brand it later
+    bundle_identifier="com.lakeosoyoos.splicereport",
+    info_plist={
+        "CFBundleName": APP_NAME,
+        "CFBundleDisplayName": "Splice Report",
+        "CFBundleShortVersionString": "1.0.0",
+        "CFBundleVersion": "1.0.0",
+        "NSHighResolutionCapable": True,
+        # Hide from the Dock briefly during the cold launch (a real .app
+        # without a window for ~10 s otherwise gets the bouncing icon).
+        "LSUIElement": False,
+    },
 )

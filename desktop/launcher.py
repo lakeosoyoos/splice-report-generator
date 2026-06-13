@@ -59,6 +59,8 @@ RAW_URL_FMT    = ("https://raw.githubusercontent.com/"
 # imports it.
 ENGINE_FILES = [
     "splicereportmatchexfo.py",
+    "sor_reader324802a.py",
+    "json_reader.py",
     "components/otdr_settings/__init__.py",
     "components/otdr_settings/index.html",
     "desktop/desktop_app.py",
