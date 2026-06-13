@@ -91,6 +91,54 @@ def _parse_fxd_params(data, blocks):
     }
 
 
+def _parse_sup_params(data, blocks):
+    """Parse the SR-4731 SupParams block (Supplier / OTDR module / mainframe
+    identifying strings).  All fields are null-terminated latin-1 strings
+    in this fixed order — what we surface as 'otdr_model' / 'otdr_serial'
+    matches what the EXFO viewer shows under Test Parameters → OTDR Info.
+
+    Field order per SR-4731:
+        SupplierName, MainframeID, MainframeSN, ModuleID, ModuleSN,
+        SoftwareRev, OtherInfo
+
+    The module ID / serial is the right answer for both EXFO single-frame
+    rigs (where they're populated) and benchtop systems (where they match
+    the mainframe).  We fall back to mainframe when the module fields are
+    blank.
+    """
+    if 'SupParams' not in blocks:
+        return {}
+    body = blocks['SupParams']['body']
+    fields = []
+    o = body
+    # Read up to 7 null-terminated strings starting at body.
+    for _ in range(7):
+        try:
+            e = data.index(b'\x00', o)
+        except ValueError:
+            break
+        if e - o > 256:        # runaway / not actually a string
+            break
+        s = data[o:e].decode('latin-1', errors='replace').strip()
+        fields.append(s)
+        o = e + 1
+    while len(fields) < 7:
+        fields.append('')
+    supplier, mainframe_id, mainframe_sn, module_id, module_sn, sw_rev, other = fields[:7]
+    return {
+        'sup_supplier':     supplier,
+        'sup_mainframe_id': mainframe_id,
+        'sup_mainframe_sn': mainframe_sn,
+        'sup_module_id':    module_id,
+        'sup_module_sn':    module_sn,
+        'sup_software_rev': sw_rev,
+        'sup_other':        other,
+        # Promoted fields (module preferred, fallback to mainframe).
+        'otdr_model':  module_id or mainframe_id or '',
+        'otdr_serial': module_sn or mainframe_sn or '',
+    }
+
+
 def _read_ior(data):
     """Read the group index (IOR) from the SOR file. Stored as uint32 * 100000."""
     # The IOR is typically near offset 305 in EXFO files, stored as e.g. 147000 = 1.47000
@@ -711,6 +759,7 @@ def parse_sor_full(filepath, trim=True):
     if full_trace is None:
         return None
     fxd    = _parse_fxd_params(data, blocks)
+    sup    = _parse_sup_params(data, blocks)
     events = _parse_key_events(data, blocks)
     span   = _find_reflective_span(events)
     acq_range = fxd.get('acq_range', 0)
@@ -732,6 +781,12 @@ def parse_sor_full(filepath, trim=True):
         'full_points': len(full_trace),
         'date_time': fxd.get('date_time', 0),
         'duration_sec': fxd.get('duration_sec'),
+        # OTDR model / serial from SupParams (used by the acquisition-
+        # parameters audit sheet).  Empty strings when the block is
+        # missing or the supplier left the fields blank.
+        'otdr_model':  sup.get('otdr_model', ''),
+        'otdr_serial': sup.get('otdr_serial', ''),
+        'sup_params':  sup,
     }
     # ── Augment with EXFO proprietary block data when present ──
     prop = _parse_proprietary_block(data, blocks)

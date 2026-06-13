@@ -111,6 +111,48 @@ def parse_otdr_json(filepath: str) -> dict:
     pulse_ns = _f(params.get('Pulse')) or 500.0
     launch_m = _f(params.get('LaunchFiberLength')) or 0.0
 
+    # ── Acquisition-audit fields (model / serial / timestamp / duration) ──
+    # These were added for the report's "Acquisition Parameters" sheet.
+    # All optional — empty string / None when absent.
+    hardware = data.get('Hardware') or {}
+    unit_a = hardware.get('UnitA') or hardware.get('unitA') or {}
+    otdr_model  = str(unit_a.get('ModelName')  or unit_a.get('modelName')  or '')
+    otdr_serial = str(unit_a.get('SerialNumber') or unit_a.get('serialNumber') or '')
+
+    # TestDateTime can be top-level or inside the OtdrMeasurements entry.
+    # Stored as ISO-8601 (e.g. '2025-05-21T15:32:11Z') — convert to Unix
+    # epoch (UTC) for the audit's calendar-day bucketing.
+    test_dt_str = data.get('TestDateTime') or m.get('TestDateTime') or ''
+    date_time_epoch = 0
+    if test_dt_str:
+        import datetime as _dt
+        try:
+            s = test_dt_str.rstrip('Z')
+            # Python <3.11 doesn't accept 'Z' on fromisoformat — chop it.
+            dt = _dt.datetime.fromisoformat(s)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=_dt.timezone.utc)
+            date_time_epoch = int(dt.timestamp())
+        except (ValueError, TypeError):
+            date_time_epoch = 0
+
+    # Averaging — Parameters.Duration is ISO-8601 (e.g. 'PT15S').
+    duration_sec = None
+    dur_raw = params.get('Duration') or params.get('duration')
+    if isinstance(dur_raw, (int, float)):
+        duration_sec = float(dur_raw)
+    elif isinstance(dur_raw, str) and dur_raw:
+        # Cheap ISO-8601 parse: PT<sec>S or PT<min>M<sec>S — enough for
+        # OTDR durations which are always sub-minute / sub-hour.
+        import re as _re
+        m_match = _re.match(r'^PT(?:(\d+)H)?(?:(\d+)M)?(?:([\d.]+)S)?$', dur_raw)
+        if m_match:
+            h, mn, s = m_match.groups(default='0')
+            try:
+                duration_sec = int(h) * 3600 + int(mn) * 60 + float(s)
+            except (TypeError, ValueError):
+                duration_sec = None
+
     # Wavelength may live under different keys
     wavelength_nm = 1550.0
     link_results = data.get('LinkResults', {}).get('Results', [{}])
@@ -224,6 +266,13 @@ def parse_otdr_json(filepath: str) -> dict:
         'ior': 1.4682,  # standard for SMF at 1550nm; JSON doesn't always expose IOR directly
         'exfo_calibration': calibration,
         'exfo_sampling_period': 2 * resolution_m * 1.4682 / 2.998e8,  # back-compute
+        # Acquisition-audit fields (mirror the SOR parser's keys so the
+        # audit module can treat both formats uniformly).
+        'date_time':   date_time_epoch,
+        'wavelength':  wavelength_nm,                  # nm
+        'duration_sec': duration_sec,                  # seconds, from PT…S
+        'otdr_model':  otdr_model,
+        'otdr_serial': otdr_serial,
         # JSON extras
         '_json_resolution_m': resolution_m,
         '_json_first_pos_m': first_pos_m,

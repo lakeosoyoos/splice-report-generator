@@ -673,9 +673,10 @@ if run:
                 launch_issues={"A": launch_a, "B": launch_b},
             )
             write_xlsx(cells, splices, n_fibers, int(engine.RIBBON_SIZE),
-                        xlsx_path, launch_cells_a=la, launch_cells_b=lb,
-                        splices_meta=splices,
-                        site_a=a_name, site_b=b_name, span_km=span_km)
+                        xlsx_path,
+                        site_a=a_name, site_b=b_name, span_km=span_km,
+                        launch_cells_a=la, launch_cells_b=lb,
+                        fibers_a=fa, fibers_b=fb)
         prog.progress(1.0, text="Done.")
     finally:
         _restore_overrides(saved)

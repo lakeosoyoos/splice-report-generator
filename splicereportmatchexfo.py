@@ -3560,10 +3560,25 @@ def ribbon_label(ri, ribbon_size, n_fibers):
 
 
 def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_b, span_km,
-               launch_cells_a=None, launch_cells_b=None):
+               launch_cells_a=None, launch_cells_b=None,
+               fibers_a=None, fibers_b=None):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Splice Report"
+
+    # ── Acquisition-parameters audit sheet (added at the END of write_xlsx
+    #    so we can insert it as sheet 0 once we have the workbook).  When
+    #    fibers_a / fibers_b are passed, the audit checks every trace's
+    #    test date / OTDR model + serial / wavelength / pulse width /
+    #    averaging for consistency and reports majority-vs-outliers.
+    _audit_payload = None
+    if fibers_a is not None or fibers_b is not None:
+        try:
+            from acquisition_audit import audit_acquisition
+            _audit_payload = audit_acquisition(fibers_a or {}, fibers_b or {})
+        except Exception as _exc:
+            print(f"  WARN: acquisition audit failed: {_exc}")
+            _audit_payload = None
 
     n_ribbons = (n_fibers + ribbon_size - 1) // ribbon_size
     n_splices = len(splices)
@@ -3949,6 +3964,17 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
 
     ws.freeze_panes = 'C4'
 
+    # Insert the acquisition-parameters audit as the FIRST sheet, and set
+    # it as the active sheet so the workbook opens on it.  Done last so
+    # the Splice Report sheet is fully populated before we re-order.
+    if _audit_payload is not None:
+        try:
+            from acquisition_audit import render_xlsx_sheet
+            render_xlsx_sheet(wb, _audit_payload,
+                              font_name=FONT_NAME, font_size=FSIZE)
+        except Exception as _exc:
+            print(f"  WARN: failed to render acquisition sheet: {_exc}")
+
     wb.save(output_path)
     print(f"  Saved: {output_path}")
 
@@ -4268,7 +4294,8 @@ def main():
     print(f"Writing Excel report...")
     write_xlsx(cells, splices, n_fibers, args.ribbon_size, args.output,
                args.site_a, args.site_b, span_km,
-               launch_cells_a=launch_cells_a, launch_cells_b=launch_cells_b)
+               launch_cells_a=launch_cells_a, launch_cells_b=launch_cells_b,
+               fibers_a=fibers_a, fibers_b=fibers_b)
 
     print(f"\n{'═'*60}")
     print(f"  SPLICE REPORT (EXFO-MATCH + BENDS) COMPLETE")

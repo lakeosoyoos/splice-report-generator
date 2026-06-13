@@ -398,11 +398,27 @@ with st.sidebar:
     # key= forces it to re-render with the new initials).
     st.markdown("**Customer profile**")
     _profile_names = list(CUSTOMER_PROFILES.keys())
-    _cur = st.session_state.get("otdr_profile", _profile_names[0])
+
+    # Defensive cleanup: a returning user may have an "otdr_profile"
+    # or selectbox widget value from a PRIOR deploy whose profile name
+    # no longer exists (e.g. the old "Customer A — strict" → renamed
+    # to "Lumen").  If we leave a stale value in the widget key,
+    # Streamlit raises StreamlitAPIException because the saved value
+    # isn't in the current options list and the whole app fails to
+    # render.  Reset to the first profile when the stored name is
+    # unknown.
+    if st.session_state.get("otdr_profile") not in _profile_names:
+        st.session_state.otdr_profile = _profile_names[0]
+    if st.session_state.get("otdr_profile_select") not in _profile_names:
+        # Pop rather than overwrite so the selectbox seeds from
+        # `index=` on this render instead of from the stale state.
+        st.session_state.pop("otdr_profile_select", None)
+
+    _cur = st.session_state["otdr_profile"]
     _picked = st.selectbox(
         "Customer",
         _profile_names,
-        index=_profile_names.index(_cur) if _cur in _profile_names else 0,
+        index=_profile_names.index(_cur),
         label_visibility="collapsed",
         key="otdr_profile_select",
         help=("Each profile selects a different bundle of Apply / Fail "
@@ -692,7 +708,8 @@ if run_clicked:
             write_xlsx(cells, splices, n_fibers, int(ribbon_size), xlsx_path,
                        site_a, site_b, actual_span,
                        launch_cells_a=launch_cells_a,
-                       launch_cells_b=launch_cells_b)
+                       launch_cells_b=launch_cells_b,
+                       fibers_a=fibers_a, fibers_b=fibers_b)
         with open(xlsx_path, "rb") as fh:
             xlsx_bytes = fh.read()
 

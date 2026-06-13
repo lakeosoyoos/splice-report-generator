@@ -61,6 +61,7 @@ ENGINE_FILES = [
     "splicereportmatchexfo.py",
     "sor_reader324802a.py",
     "json_reader.py",
+    "acquisition_audit.py",
     "components/otdr_settings/__init__.py",
     "components/otdr_settings/index.html",
     "desktop/desktop_app.py",
