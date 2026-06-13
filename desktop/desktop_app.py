@@ -480,6 +480,12 @@ THRESHOLDS = {
 # ─────────────────────────────────────────────────────────────────────────────
 st.subheader("1. Pick A and B")
 
+# A returning picked path must be written to the TEXT_INPUT's own widget
+# key, not a separate session_state slot.  Streamlit's widget-state takes
+# precedence over `value=` on re-render, so writing to `dir_a` (separate
+# slot) leaves the text_input stuck on its prior empty value and the
+# picked path never appears.  After we mutate the widget key we call
+# st.rerun() so the visible box refreshes immediately.
 c1, c2 = st.columns(2)
 with c1:
     st.markdown("**A-direction**")
@@ -487,14 +493,15 @@ with c1:
     with b1:
         picked = _pick_folder("Browse folder…", key="browse_a_folder")
         if picked:
-            st.session_state.dir_a = picked
+            st.session_state["dir_a_input"] = picked
+            st.rerun()
     with b2:
         picked = _pick_zip("Browse zip…", key="browse_a_zip")
         if picked:
-            st.session_state.dir_a = picked
+            st.session_state["dir_a_input"] = picked
+            st.rerun()
     dir_a = st.text_input(
         "A path",
-        value=st.session_state.get("dir_a", ""),
         key="dir_a_input",
         help="Folder OR .zip containing the A-direction .sor / .json files.",
     )
@@ -504,14 +511,15 @@ with c2:
     with b1:
         picked = _pick_folder("Browse folder…", key="browse_b_folder")
         if picked:
-            st.session_state.dir_b = picked
+            st.session_state["dir_b_input"] = picked
+            st.rerun()
     with b2:
         picked = _pick_zip("Browse zip…", key="browse_b_zip")
         if picked:
-            st.session_state.dir_b = picked
+            st.session_state["dir_b_input"] = picked
+            st.rerun()
     dir_b = st.text_input(
         "B path",
-        value=st.session_state.get("dir_b", ""),
         key="dir_b_input",
         help="Folder OR .zip containing the B-direction .sor / .json files.",
     )
