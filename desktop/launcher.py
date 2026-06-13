@@ -62,6 +62,7 @@ ENGINE_FILES = [
     "sor_reader324802a.py",
     "json_reader.py",
     "acquisition_audit.py",
+    "reburn_summary.py",
     "components/otdr_settings/__init__.py",
     "components/otdr_settings/index.html",
     "desktop/desktop_app.py",

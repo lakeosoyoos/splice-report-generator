@@ -676,7 +676,8 @@ if run:
                         xlsx_path,
                         site_a=a_name, site_b=b_name, span_km=span_km,
                         launch_cells_a=la, launch_cells_b=lb,
-                        fibers_a=fa, fibers_b=fb)
+                        fibers_a=fa, fibers_b=fb,
+                        all_results=all_results)
         prog.progress(1.0, text="Done.")
     finally:
         _restore_overrides(saved)

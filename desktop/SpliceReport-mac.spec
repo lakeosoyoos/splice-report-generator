@@ -70,6 +70,7 @@ hiddenimports += [
     "sor_reader324802a",
     "json_reader",
     "acquisition_audit",
+    "reburn_summary",
     "components.otdr_settings",
     "tkinter",
     "tkinter.filedialog",
@@ -84,6 +85,7 @@ datas += [(os.path.join(REPO_ROOT, "splicereportmatchexfo.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "sor_reader324802a.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "json_reader.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "acquisition_audit.py"), ".")]
+datas += [(os.path.join(REPO_ROOT, "reburn_summary.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",
                          "__init__.py"),
             "components/otdr_settings")]

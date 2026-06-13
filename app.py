@@ -709,7 +709,8 @@ if run_clicked:
                        site_a, site_b, actual_span,
                        launch_cells_a=launch_cells_a,
                        launch_cells_b=launch_cells_b,
-                       fibers_a=fibers_a, fibers_b=fibers_b)
+                       fibers_a=fibers_a, fibers_b=fibers_b,
+                       all_results=all_results)
         with open(xlsx_path, "rb") as fh:
             xlsx_bytes = fh.read()
 

@@ -84,6 +84,7 @@ hiddenimports += [
     "sor_reader324802a",
     "json_reader",
     "acquisition_audit",
+    "reburn_summary",
     "components.otdr_settings",
     # Folder picker — wrapped in try/except in desktop_app.py but Tk and
     # filedialog can be missed by PyInstaller's auto-detection on
@@ -103,6 +104,7 @@ datas += [(os.path.join(REPO_ROOT, "splicereportmatchexfo.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "sor_reader324802a.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "json_reader.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "acquisition_audit.py"), ".")]
+datas += [(os.path.join(REPO_ROOT, "reburn_summary.py"), ".")]
 # Custom component (the Streamlit component_v1 declare_component looks
 # for the HTML next to the __init__.py)
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",

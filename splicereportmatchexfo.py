@@ -3561,7 +3561,7 @@ def ribbon_label(ri, ribbon_size, n_fibers):
 
 def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_b, span_km,
                launch_cells_a=None, launch_cells_b=None,
-               fibers_a=None, fibers_b=None):
+               fibers_a=None, fibers_b=None, all_results=None):
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Splice Report"
@@ -3964,9 +3964,31 @@ def write_xlsx(cells, splices, n_fibers, ribbon_size, output_path, site_a, site_
 
     ws.freeze_panes = 'C4'
 
+    # ── Reburn summary sheet ──
+    # Inserted BEFORE the acquisition audit so it lands at index 1
+    # after the audit insertion below (insert_at=0 for audit, =1 for
+    # reburn → ordering becomes [Acquisition, Reburn, Splice Report,
+    # Legend]).  Counts ribbon × splice cells that contain at least
+    # one A+B reburn fiber.
+    if all_results is not None:
+        try:
+            from reburn_summary import compute_reburn_summary, \
+                render_xlsx_sheet as _render_reburn
+            _reburn = compute_reburn_summary(all_results, splices,
+                                              n_fibers, ribbon_size)
+            _render_reburn(wb, _reburn,
+                           insert_at=0,                # before any audit
+                           font_name=FONT_NAME, font_size=FSIZE)
+            print(f"  Reburn summary: {_reburn['reburn_cells']} of "
+                  f"{_reburn['total_cells']} cells "
+                  f"({_reburn['reburn_percentage']:.2f}%)")
+        except Exception as _exc:
+            print(f"  WARN: failed to render reburn summary: {_exc}")
+
     # Insert the acquisition-parameters audit as the FIRST sheet, and set
     # it as the active sheet so the workbook opens on it.  Done last so
-    # the Splice Report sheet is fully populated before we re-order.
+    # both the Splice Report sheet and the Reburn Summary above land
+    # AFTER it in the final sheet order.
     if _audit_payload is not None:
         try:
             from acquisition_audit import render_xlsx_sheet
@@ -4295,7 +4317,8 @@ def main():
     write_xlsx(cells, splices, n_fibers, args.ribbon_size, args.output,
                args.site_a, args.site_b, span_km,
                launch_cells_a=launch_cells_a, launch_cells_b=launch_cells_b,
-               fibers_a=fibers_a, fibers_b=fibers_b)
+               fibers_a=fibers_a, fibers_b=fibers_b,
+               all_results=all_results)
 
     print(f"\n{'═'*60}")
     print(f"  SPLICE REPORT (EXFO-MATCH + BENDS) COMPLETE")
