@@ -676,31 +676,51 @@ def _enhance_events_with_trace(fiber_result, expected_span_km, ior=None, pop_noi
 # ═══════════════════════════════════════════════════════════════════════
 
 def _extract_fiber_num(fn):
-    """Extract fiber number from a SOR/JSON filename.
+    """Extract fiber number from a SOR/JSON/TRC filename.
 
-    Handles the common naming patterns we see in the field:
+    Handles every naming pattern that has shown up on the user's disk
+    after a survey of ~38k real files across 11 cable codes (see
+    Project Memory note from 2026-06-13):
+
       ``LAGDUR0001.sor``                  -> 1     (run after a prefix)
-      ``Norsea001_1550.sor``              -> 1     (strip _<wavelength> first)
+      ``Norsea001_1550.sor``              -> 1     (strip _<wavelength>)
       ``Seattle to Spokane d.0431.sor``   -> 431   (rightmost digit run)
-      ``20260520_LAGDUR0001.sor``         -> 1     (rightmost run beats date)
-      ``fiber 17.json``                   -> 17
+      ``20260520_LAGDUR0001.sor``         -> 1     (date prefix ignored)
+      ``DURSAN001_1550 .json``            -> 1     (EXFO trailing-space)
+      ``VERSLK001_131015501625 .json``    -> 1     (multi-λ suffix)
+      ``TEST0001_155016251310.trc``       -> 1     (multi-λ TRC)
+      ``CHC-HCH-LS-089.trc``              -> 89    (dashed long-shot)
+      ``._STRROM0001_1550.sor``           -> None  (macOS AppleDouble)
 
-    Rule: strip the file extension, strip a trailing wavelength suffix
-    (``_1310`` / ``_1490`` / ``_1550`` / ``_1625``, also ``-`` or `` `` or
-    ``.`` separators), then take the RIGHTMOST run of digits.  Real-world
-    OTDR file naming puts the fiber number last (after any cable / span /
-    date prefix), so the rightmost digit run is the right answer in
-    every case I've seen.
+    Rule:
+      1. Strip the extension AND any leading "._" (AppleDouble metadata
+         that lands next to real files in zips extracted on Mac).
+      2. Right-strip whitespace (EXFO FastReporter exports JSON with a
+         trailing space between the wavelength code and ``.json``).
+      3. Strip one OR MORE concatenated trailing wavelength codes,
+         e.g. ``_131015501625`` is three wavelengths jammed together.
+      4. Take the RIGHTMOST run of digits — fiber numbers are
+         conventionally last after any cable / span / date prefix.
 
-    The earlier implementation took ``fn.split('.')[0]`` first, which
-    silently dropped any name that put the fiber number AFTER a dot
-    infix — e.g. ``Seattle...d.0431.sor`` reduced to ``Seattle``,
-    no digits, fiber None, "Loaded zero fibers from the A-direction
-    upload."  Reported by a tech on a Seattle span on 2026-06-13.
+    Returns None when no fiber number can be extracted (which causes
+    ``_load_dir`` to skip the file rather than silently overwrite a
+    valid fiber).
     """
+    # AppleDouble sidecars created by macOS zip-extractors mirror the
+    # real filename with a "._" prefix; they're not OTDR data.  Skip
+    # them BEFORE the digit walk so they never collide with the real
+    # fiber that follows.
+    if os.path.basename(fn).startswith("._"):
+        return None
     stem, _ = os.path.splitext(fn)
-    # Strip a trailing wavelength code (with any common separator).
-    stem = re.sub(r'[\s_\-.](?:850|1300|1310|1490|1550|1625)$', '', stem)
+    stem = stem.rstrip()
+    # Strip ONE OR MORE concatenated trailing wavelength codes.  The
+    # multi-λ EXFO exports we see in the field write all three
+    # wavelengths jammed together: ``_131015501625``.  Without the +
+    # quantifier the whole concatenation reads as one giant fiber
+    # number (~131_500_000_000) and every fiber collides.
+    stem = re.sub(
+        r'[\s_\-.](?:850|1300|1310|1490|1550|1625)+$', '', stem)
     matches = re.findall(r'\d+', stem)
     if not matches:
         return None
@@ -731,8 +751,17 @@ def load_all(dir_a, dir_b):
         use_json = _dir_has_json(d)
         ext = '.json' if use_json else '.sor'
         parser = parse_otdr_json if use_json else (lambda p: parse_sor_full(p, trim=False))
+        # Tally so we can WARN if the filename pattern is ambiguous
+        # enough that two real files map to the same fiber number — a
+        # silent overwrite used to be how multi-cable ribbon-pair zips
+        # (e.g. FTHNTXAD01_AD04_001.sor + FTHNTXAD01_AD05_001.sor) lost
+        # data without any error surfaced to the tech.
+        collision_count = 0
         for fn in sorted(os.listdir(d)):
             if not fn.lower().endswith(ext):
+                continue
+            if os.path.basename(fn).startswith("._"):
+                # macOS AppleDouble metadata sidecar; not OTDR data.
                 continue
             try:
                 r = parser(os.path.join(d, fn))
@@ -742,9 +771,26 @@ def load_all(dir_a, dir_b):
             if not r:
                 continue
             fnum = _extract_fiber_num(fn)
-            if fnum:
-                r['_source'] = 'json' if use_json else 'sor'
-                out[fnum] = r
+            if not fnum:
+                print(f"  WARN: could not extract fiber number from "
+                      f"'{fn}' — skipped (engine needs a numeric "
+                      f"fiber id derived from the filename).")
+                continue
+            if fnum in out:
+                collision_count += 1
+                if collision_count <= 5:
+                    print(f"  WARN: fiber #{fnum} already loaded from "
+                          f"'{out[fnum].get('filename', '?')}'; "
+                          f"'{fn}' would overwrite it — keeping the "
+                          f"first.")
+                continue
+            r['_source'] = 'json' if use_json else 'sor'
+            out[fnum] = r
+        if collision_count > 5:
+            print(f"  WARN: {collision_count - 5} more fiber-number "
+                  f"collisions in this directory (suppressed).  If you "
+                  f"intended to load multiple cables, run each cable "
+                  f"as its own A-direction.")
 
     _load_dir(dir_a, fibers_a)
     _load_dir(dir_b, fibers_b)

@@ -116,7 +116,57 @@ def _run_smoke() -> int:
                     f"'valid OTDR file'; got successes={success_msgs}, "
                     f"errors={[e.value for e in at.error]}")
 
-    # ─── Test 4: static check that the picker writes to the right slot ─
+    # ─── Test 4: _extract_fiber_num covers every real filename pattern ─
+    # Locked from the filename sweep on 2026-06-13 (project memory note
+    # `project_filename_sweep_2026_06_13`).  Any change to the
+    # extractor regex must keep every row of EXPECTED green or this
+    # check fails the build before a tech sees "Loaded zero fibers."
+    print("[test_ui] Test X: _extract_fiber_num sweep across known patterns")
+    try:
+        from splicereportmatchexfo import _extract_fiber_num
+    except Exception as exc:
+        failures.append(f"  testX: could not import _extract_fiber_num: {exc}")
+    else:
+        EXPECTED = [
+            ("BARTUL001_1550.sor",                       1),
+            ("LAGDUR0001.sor",                            1),
+            ("DURLAG0001.sor",                            1),
+            ("Norsea001_1550.sor",                        1),
+            ("Norsea432_1550.sor",                      432),
+            ("Seattle to Spokane d.0431.sor",           431),
+            ("Seattle-Stevens-d.0001.sor",                1),
+            ("20260520_LAGDUR0001.sor",                   1),
+            ("fiber 17.json",                            17),
+            # EXFO trailing-space JSON (the high-volume real bug)
+            ("DURSAN001_1550 .json",                      1),
+            ("ELMMIL1152_1550 .json",                  1152),
+            ("SANDUR864_1550 .json",                    864),
+            # multi-wavelength concatenated suffix
+            ("VERSLK001_131015501625 .json",              1),
+            ("VERSLK018_131015501625.trc",               18),
+            ("TEST0001_155016251310.trc",                 1),
+            # mixed shapes
+            ("ELMMILsh0001_1550.sor",                     1),
+            ("shortTUCROM445_1550.sor",                 445),
+            ("DNW1DNW50007withstartstop.sor",         50007),
+            ("TrimmedCHM1CHM20001.sor",               20001),
+            ("CHC-HCH-LS-089.trc",                       89),
+            ("DNWRCH-A-271.sor",                         271),
+            # AppleDouble sidecars MUST be skipped
+            ("._STRROM0001_1550.sor",                  None),
+            ("._DURSAN001_1550 .json",                 None),
+            # nothing-to-extract cases
+            ("LAGDUR.sor",                              None),
+            ("Norsea_1550.sor",                         None),
+        ]
+        for fn, want in EXPECTED:
+            got = _extract_fiber_num(fn)
+            if got != want:
+                failures.append(
+                    f"  testX: _extract_fiber_num({fn!r}) returned "
+                    f"{got!r}, expected {want!r}")
+
+    # ─── Test 5: static check that the picker writes to the right slot ─
     # This is the structural check that catches the EXACT class of bug
     # the tech reported ("dialog opens but path doesn't stick").  The
     # picker callback must write to the text_input's OWN key
