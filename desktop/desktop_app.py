@@ -121,8 +121,8 @@ st.set_page_config(
 st.title("Splice Report Generator (Desktop)")
 st.caption(
     "Bidirectional OTDR splice QC, running 100% on this machine.  "
-    "Pick the A-direction and B-direction folders, click Run, and the "
-    "report drops next to the inputs."
+    "Pick a folder OR a zip for each direction, click Run, and the report "
+    "drops next to the inputs."
 )
 
 
@@ -168,9 +168,54 @@ def _is_otdr_file(path: str) -> bool:
     return False
 
 
-def _walk_otdr(folder: str) -> list[str]:
+def _is_zip_path(path: str) -> bool:
+    return bool(path) and path.lower().endswith(".zip") and os.path.isfile(path)
+
+
+def _walk_zip_otdr(zip_path: str) -> list[str]:
+    """Walk inside a zip and return the names of entries that pass the
+    content-sniff guard.  Names are returned as 'zip:<entry>' so the
+    staging step can pull them back out.  Skips macOS metadata (__MACOSX,
+    .DS_Store)."""
     out = []
-    for root, _, files in os.walk(folder):
+    try:
+        with zipfile.ZipFile(zip_path) as zf:
+            for nm in zf.namelist():
+                if nm.endswith("/") or nm.startswith("__MACOSX") or "/.DS_Store" in nm:
+                    continue
+                low = nm.lower()
+                if not (low.endswith(".sor") or low.endswith(".json")):
+                    continue
+                try:
+                    with zf.open(nm) as fh:
+                        head = fh.read(4096)
+                except (KeyError, RuntimeError):
+                    continue
+                if low.endswith(".sor"):
+                    if SOR_MAGIC in head[:8]:
+                        out.append(f"zip:{nm}")
+                else:
+                    if any(k in head for k in JSON_KEYS):
+                        out.append(f"zip:{nm}")
+    except (zipfile.BadZipFile, OSError):
+        return []
+    return out
+
+
+def _walk_otdr(path: str) -> list[str]:
+    """Dispatch on whether the input is a folder or a zip.  Returns a list
+    of opaque tokens that _stage_flat() knows how to materialize:
+      - folder mode: absolute filesystem paths
+      - zip mode:    'zip:<entry-name-inside-zip>'  (paired with the zip
+                     path in _stage_flat via a closure)"""
+    if not path:
+        return []
+    if _is_zip_path(path):
+        return _walk_zip_otdr(path)
+    if not os.path.isdir(path):
+        return []
+    out = []
+    for root, _, files in os.walk(path):
         for f in files:
             full = os.path.join(root, f)
             if _is_otdr_file(full):
@@ -178,37 +223,65 @@ def _walk_otdr(folder: str) -> list[str]:
     return out
 
 
-def _stage_flat(paths: list[str], prefix: str) -> tuple[str, list[str]]:
-    """Copy every path into a fresh temp dir with a flat layout.
-    De-duplicates basenames by suffixing  __<n>  so two files with the same
-    name living in different subfolders don't overwrite each other.
+def _stage_flat(paths: list[str], prefix: str,
+                  zip_source: str | None = None) -> tuple[str, list[str]]:
+    """Materialize each input into a fresh temp dir with a flat layout.
+    De-duplicates basenames by suffixing __<n>.  Handles both filesystem
+    paths and 'zip:<entry>' tokens — when a token has the zip: prefix,
+    the entry is extracted from zip_source.
     Returns (temp_dir, [warnings])."""
     tmp = tempfile.mkdtemp(prefix=prefix)
     warns: list[str] = []
     seen: dict[str, int] = {}
-    for src in paths:
-        base = os.path.basename(src)
+
+    def _next_dest(base: str) -> str:
         stem, ext = os.path.splitext(base)
         n = seen.get(base, 0)
-        if n == 0:
-            dest_name = base
-        else:
-            dest_name = f"{stem}__{n}{ext}"
-            warns.append(
-                f"Duplicate basename '{base}' — staged as '{dest_name}'.")
         seen[base] = n + 1
-        try:
-            shutil.copy2(src, os.path.join(tmp, dest_name))
-        except OSError as exc:
-            warns.append(f"Skipped '{src}' ({exc}).")
+        if n == 0:
+            return base
+        nm = f"{stem}__{n}{ext}"
+        warns.append(f"Duplicate basename '{base}' — staged as '{nm}'.")
+        return nm
+
+    zf = None
+    try:
+        if zip_source is not None:
+            try:
+                zf = zipfile.ZipFile(zip_source)
+            except (zipfile.BadZipFile, OSError) as exc:
+                warns.append(f"Could not open zip '{zip_source}' ({exc}).")
+                return tmp, warns
+        for src in paths:
+            if src.startswith("zip:"):
+                if zf is None:
+                    warns.append(f"Skipped '{src}' — no zip source available.")
+                    continue
+                entry = src[4:]
+                base = os.path.basename(entry) or entry
+                dest_name = _next_dest(base)
+                try:
+                    with zf.open(entry) as srcfh, \
+                            open(os.path.join(tmp, dest_name), "wb") as dstfh:
+                        shutil.copyfileobj(srcfh, dstfh)
+                except (KeyError, OSError) as exc:
+                    warns.append(f"Skipped '{src}' ({exc}).")
+            else:
+                base = os.path.basename(src)
+                dest_name = _next_dest(base)
+                try:
+                    shutil.copy2(src, os.path.join(tmp, dest_name))
+                except OSError as exc:
+                    warns.append(f"Skipped '{src}' ({exc}).")
+    finally:
+        if zf is not None:
+            zf.close()
     return tmp, warns
 
 
 def _pick_folder(button_label: str, key: str) -> str | None:
     """Open the native folder picker and return the chosen path (or None).
-    Uses tkinter — no extra deps.  Falls back to the paste-path box if
-    tkinter isn't available (very rare, but possible on some Linux
-    runners)."""
+    Uses tkinter — no extra deps."""
     if st.button(button_label, key=key):
         try:
             import tkinter as tk
@@ -221,6 +294,28 @@ def _pick_folder(button_label: str, key: str) -> str | None:
             return path or None
         except Exception as exc:
             st.warning(f"Native folder picker unavailable ({exc}). "
+                       f"Paste the path below instead.")
+            return None
+    return None
+
+
+def _pick_zip(button_label: str, key: str) -> str | None:
+    """Open a native file picker filtered to .zip files."""
+    if st.button(button_label, key=key):
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.attributes("-topmost", True)
+            path = filedialog.askopenfilename(
+                parent=root,
+                filetypes=[("Zip archive", "*.zip"), ("All files", "*")],
+            )
+            root.destroy()
+            return path or None
+        except Exception as exc:
+            st.warning(f"Native file picker unavailable ({exc}). "
                        f"Paste the path below instead.")
             return None
     return None
@@ -381,55 +476,83 @@ THRESHOLDS = {
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-#  Step 1 — pick folders
+#  Step 1 — pick folders or zips
 # ─────────────────────────────────────────────────────────────────────────────
-st.subheader("1. Pick folders")
+st.subheader("1. Pick A and B")
 
 c1, c2 = st.columns(2)
 with c1:
-    st.markdown("**A-direction folder**")
-    picked_a = _pick_folder("Browse for A…", key="browse_a")
-    if picked_a:
-        st.session_state.dir_a = picked_a
+    st.markdown("**A-direction**")
+    b1, b2 = st.columns(2)
+    with b1:
+        picked = _pick_folder("Browse folder…", key="browse_a_folder")
+        if picked:
+            st.session_state.dir_a = picked
+    with b2:
+        picked = _pick_zip("Browse zip…", key="browse_a_zip")
+        if picked:
+            st.session_state.dir_a = picked
     dir_a = st.text_input(
         "A path",
         value=st.session_state.get("dir_a", ""),
         key="dir_a_input",
-        help="Folder containing the A-direction .sor / .json files.",
+        help="Folder OR .zip containing the A-direction .sor / .json files.",
     )
 with c2:
-    st.markdown("**B-direction folder**")
-    picked_b = _pick_folder("Browse for B…", key="browse_b")
-    if picked_b:
-        st.session_state.dir_b = picked_b
+    st.markdown("**B-direction**")
+    b1, b2 = st.columns(2)
+    with b1:
+        picked = _pick_folder("Browse folder…", key="browse_b_folder")
+        if picked:
+            st.session_state.dir_b = picked
+    with b2:
+        picked = _pick_zip("Browse zip…", key="browse_b_zip")
+        if picked:
+            st.session_state.dir_b = picked
     dir_b = st.text_input(
         "B path",
         value=st.session_state.get("dir_b", ""),
         key="dir_b_input",
-        help="Folder containing the B-direction .sor / .json files.",
+        help="Folder OR .zip containing the B-direction .sor / .json files.",
     )
 
-# Inventory + content-sniff guard
-inv_a = _walk_otdr(dir_a) if dir_a and os.path.isdir(dir_a) else []
-inv_b = _walk_otdr(dir_b) if dir_b and os.path.isdir(dir_b) else []
+
+def _path_status(label: str, path: str) -> tuple[list[str], str | None]:
+    """Returns (inventory_tokens, error_message_or_None)."""
+    if not path:
+        return [], None
+    if _is_zip_path(path):
+        items = _walk_otdr(path)
+        if not items:
+            return [], f"No valid .sor / .json OTDR files found in {label} zip."
+        return items, None
+    if not os.path.isdir(path):
+        return [], f"Not a folder or zip: {path}"
+    items = _walk_otdr(path)
+    if not items:
+        return [], f"No valid .sor / .json OTDR files found in {label}."
+    return items, None
+
+
+# Inventory + content-sniff guard (handles folder OR zip)
+inv_a, err_a = _path_status("A", dir_a)
+inv_b, err_b = _path_status("B", dir_b)
 
 c1, c2 = st.columns(2)
 with c1:
     if dir_a:
-        if not os.path.isdir(dir_a):
-            st.error(f"Not a folder: {dir_a}")
-        elif not inv_a:
-            st.error("No valid .sor / .json OTDR files found in A.")
+        if err_a:
+            st.error(err_a)
         else:
-            st.success(f"A: {len(inv_a)} valid OTDR file(s).")
+            kind = "zip" if _is_zip_path(dir_a) else "folder"
+            st.success(f"A: {len(inv_a)} valid OTDR file(s) in {kind}.")
 with c2:
     if dir_b:
-        if not os.path.isdir(dir_b):
-            st.error(f"Not a folder: {dir_b}")
-        elif not inv_b:
-            st.error("No valid .sor / .json OTDR files found in B.")
+        if err_b:
+            st.error(err_b)
         else:
-            st.success(f"B: {len(inv_b)} valid OTDR file(s).")
+            kind = "zip" if _is_zip_path(dir_b) else "folder"
+            st.success(f"B: {len(inv_b)} valid OTDR file(s) in {kind}.")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -459,11 +582,17 @@ def _restore_overrides(saved):
 
 if run:
     prog = st.progress(0.0, text="Staging A files…")
-    staged_a, warns_a = _stage_flat(inv_a, "splice_desk_a_")
+    staged_a, warns_a = _stage_flat(
+        inv_a, "splice_desk_a_",
+        zip_source=dir_a if _is_zip_path(dir_a) else None,
+    )
     for w in warns_a:
         st.warning(w)
     prog.progress(0.10, text="Staging B files…")
-    staged_b, warns_b = _stage_flat(inv_b, "splice_desk_b_")
+    staged_b, warns_b = _stage_flat(
+        inv_b, "splice_desk_b_",
+        zip_source=dir_b if _is_zip_path(dir_b) else None,
+    )
     for w in warns_b:
         st.warning(w)
 
@@ -522,12 +651,19 @@ if run:
                 all_results, splices, total_span_km=span_km)
 
         prog.progress(0.88, text="Building ribbon grid + xlsx…")
-        # Output filename derived from inputs + write next to A folder.
-        out_dir = os.path.join(os.path.dirname(os.path.abspath(dir_a)),
-                                "splice_report_output")
+        # Output filename derived from inputs + written next to the A input
+        # (whether A is a folder or a zip).  Strip a trailing .zip from the
+        # display name so the output filename reads cleanly.
+        a_abs = os.path.abspath(dir_a)
+        b_abs = os.path.abspath(dir_b)
+        a_parent = os.path.dirname(a_abs) if _is_zip_path(dir_a) else os.path.dirname(a_abs)
+        out_dir = os.path.join(a_parent, "splice_report_output")
         os.makedirs(out_dir, exist_ok=True)
         a_name = os.path.basename(os.path.normpath(dir_a)) or "A"
         b_name = os.path.basename(os.path.normpath(dir_b)) or "B"
+        for suf in (".zip", ".ZIP"):
+            if a_name.endswith(suf): a_name = a_name[:-len(suf)]
+            if b_name.endswith(suf): b_name = b_name[:-len(suf)]
         xlsx_path = os.path.join(out_dir, f"splice_report_{a_name}_to_{b_name}.xlsx")
 
         with redirect_stdout(log_buf):
