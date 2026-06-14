@@ -675,6 +675,28 @@ def _enhance_events_with_trace(fiber_result, expected_span_km, ior=None, pop_noi
 #  STEP 1 — Load all fibers
 # ═══════════════════════════════════════════════════════════════════════
 
+_FILENAME_ILLEGAL_CHARS = re.compile(r'[\\/:*?"<>|\x00-\x1f]+')
+
+
+def _safe_filename_part(s: str, fallback: str = "site") -> str:
+    """Replace characters Windows / browser download dialogs reject in
+    filenames with underscores.  Used when building xlsx filenames from
+    free-text GenParams strings (orig_loc / term_loc) — a tech in a
+    "Seattle/Stevens Pass" route would otherwise hit a broken
+    download_button save dialog or a 0-byte saved file because the slash
+    is interpreted as a path separator.
+
+    Collapses runs of whitespace + illegal chars to a single underscore,
+    strips leading/trailing underscores, and falls back to a placeholder
+    when the result is empty.
+    """
+    if not s:
+        return fallback
+    cleaned = _FILENAME_ILLEGAL_CHARS.sub('_', str(s))
+    cleaned = re.sub(r'\s+', '_', cleaned).strip('_')
+    return cleaned or fallback
+
+
 def _extract_fiber_num(fn):
     """Extract fiber number from a SOR/JSON/TRC filename.
 
@@ -1701,9 +1723,15 @@ def split_offsplice_events_into_own_columns(all_results, splices,
         # km 60.337 with 9.315 dB single-direction loss, 240 m from
         # Splice 8 at km 60.58, should sit in the Damage @ 60.34 km
         # column with F857 — not in Splice 8).
+        # is_gainer is included so a near-zero-loss field gainer that
+        # sits > CLOSURE_MATCH_KM from any closure gets its own off-splice
+        # column at the gainer's true km position — not silently
+        # re-anchored to the nearest splice with a wrong-km label.
+        # Bug #2 fix 2026-06-13.
         if not (r.get('is_bend') or r.get('is_break') or
                 r.get('is_broke') or r.get('is_ref') or
-                r.get('is_a_only') or r.get('is_b_only')):
+                r.get('is_a_only') or r.get('is_b_only') or
+                r.get('is_gainer')):
             continue
         km = r.get('bidir_dist')
         if km is None:
@@ -3395,12 +3423,17 @@ def scan_b_side_breaks(fibers_a, fibers_b, splices, existing_results,
         nearest_si = min(range(len(splices)),
                          key=lambda i: abs(splices[i]['position_km'] - a_frame_break_km))
         key = (fnum, nearest_si)
-        # When Pass 1 left a dead-zone marker at this cell (A-broken fiber,
-        # downstream splice past the break), the B-side break supersedes
-        # it — a concrete broke entry is more informative than 'DZ'.  For
-        # any other prior entry, keep the existing classification.
+        # When Pass 1 left a dead-zone marker at this cell — or Pass 2c
+        # speculatively wrote a B-fill bridge there — the B-side broke
+        # supersedes it.  A concrete broke entry is the physical truth
+        # ("this fiber is broken"); DZ is "neither trace saw it" and
+        # B-fill is "B saw it past the A break."  Both are weaker
+        # signals than a confirmed B-side termination.  Without this
+        # override, F1-F12 on Lagrande↔Durkey rendered as blue B-fill
+        # cells at km 90.46 instead of red BROKE — bug #3 fix 2026-06-13.
         prior = existing_results.get(key)
-        if prior is not None and not prior.get('is_dead_zone'):
+        if prior is not None and not (prior.get('is_dead_zone')
+                                       or prior.get('is_bfill')):
             continue
 
         label = f"{fnum} broke@{a_frame_break_km:.1f}k (B-only)"

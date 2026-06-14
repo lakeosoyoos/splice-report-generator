@@ -139,16 +139,12 @@ def test_t1_scan_a_standalone_does_not_crash_on_empty_splices():
 _FS_RESERVED = set('\\/:*?"<>|')
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="H4 pending: desktop_app builds f'splice_report_{a_name}_to_{b_name}.xlsx' "
-           "from raw os.path.basename — reserved chars break download.  "
-           "Fix should add _safe_filename_part() (or re.sub(r'[\\\\/:*?\"<>|]+', '_', s)) "
-           "in splicereportmatchexfo and desktop_app should use it.",
-)
 def test_t2_filename_sanitize_strips_reserved_chars():
-    """Once the engine exposes _safe_filename_part, no reserved fs char
-    survives.  XFAIL until the symbol exists."""
+    """H4 fixed 2026-06-13 — splicereportmatchexfo._safe_filename_part
+    replaces every Windows/browser-reserved filename char with an
+    underscore.  Both app.py and desktop_app.py wire xlsx names through
+    it so a tech on a "Seattle/Stevens Pass" route gets a savable
+    file instead of a 0-byte download."""
     try:
         from splicereportmatchexfo import _safe_filename_part  # noqa: F401
     except ImportError as e:
@@ -204,38 +200,13 @@ def _gainer_synthetic_setup():
     return all_results, splices, key
 
 
-def test_t3_h2_gainer_currently_stays_in_splice_column():
-    """H2 BUG CONFIRMATION: today, an off-splice gainer keeps its
-    original splice_idx because the splitter filter omits is_gainer.
-
-    The day H2 gets fixed (add `or r.get('is_gainer')` to the splitter
-    filter at line 1704-ish), this test will fail — replace it with the
-    paired XFAIL below, which will then XPASS → flip both.
-    """
-    all_results, splices, key = _gainer_synthetic_setup()
-    new_results, new_splices = split_offsplice_events_into_own_columns(
-        all_results, splices, total_span_km=100.0,
-    )
-    # Bug present: only one splice column, gainer still under it.
-    assert len(new_splices) == 1, (
-        "Splitter created a phantom column for the gainer — looks like "
-        "H2 was FIXED.  Update the test: drop this assertion and remove "
-        "the @xfail from test_t3_h2_gainer_should_relocate."
-    )
-    assert key in new_results
-    assert new_results[key].get("is_gainer") is True
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="H2 pending: split_offsplice_events_into_own_columns filter "
-           "at ~line 1704 omits is_gainer, so off-splice gainers stay "
-           "attributed to the wrong closure.  Fix: add "
-           "`or r.get('is_gainer')` to the filter list.",
-)
-def test_t3_h2_gainer_should_relocate_to_own_column():
-    """The behaviour we WANT: an off-splice gainer at 50 km lands in a
-    phantom column at ~50 km, not in the splice at 30 km."""
+def test_t3_h2_gainer_relocates_to_own_column():
+    """H2 fixed 2026-06-13: split_offsplice_events_into_own_columns now
+    includes is_gainer in its eligible filter, so a near-zero-loss
+    field gainer that sits > CLOSURE_MATCH_KM from any closure gets
+    its own off-splice column at the gainer's actual km instead of
+    being silently re-anchored to the nearest splice with a misleading
+    offset annotation."""
     all_results, splices, _ = _gainer_synthetic_setup()
     new_results, new_splices = split_offsplice_events_into_own_columns(
         all_results, splices, total_span_km=100.0,
@@ -335,31 +306,12 @@ def _bside_break_setup():
     return fibers_a, fibers_b, splices, existing_results, total_span_a
 
 
-def test_t4_h3_pass2d_currently_skips_bfill_cell():
-    """Current behaviour: scan_b_side_breaks refuses to overwrite the
-    Pass-2c B-fill entry because the override condition only fires on
-    is_dead_zone.  This is the H3 bug — confirm it, then XFAIL the
-    desired behaviour below.
-    """
-    fa, fb, splices, existing, total_a = _bside_break_setup()
-    new = scan_b_side_breaks(fa, fb, splices, existing, total_a)
-    # Bug present: Pass-2d found nothing new at (7, 0).
-    assert (7, 0) not in new, (
-        "Pass-2d wrote at (7, 0) — looks like H3 was FIXED.  Update "
-        "this test: drop this assertion + un-xfail the next one."
-    )
-
-
-@pytest.mark.xfail(
-    strict=True,
-    reason="H3 pending: scan_b_side_breaks line ~3403 — "
-           "`if prior is not None and not prior.get('is_dead_zone'): continue` "
-           "should also allow override when prior.get('is_bfill') (Pass-2d "
-           "concrete broke is more informative than Pass-2c B-fill).",
-)
-def test_t4_h3_pass2d_should_override_bfill():
-    """After fix: at (fiber, splice_idx) cell, Pass-2d's is_broke=True
-    entry replaces Pass-2c's is_bfill entry."""
+def test_t4_h3_pass2d_overrides_bfill():
+    """H3 fixed 2026-06-13: scan_b_side_breaks now overrides BOTH
+    Pass-1 is_dead_zone AND Pass-2c is_bfill priors.  A concrete B-side
+    broke entry is the physical truth ("this fiber is broken");
+    is_bfill is "B saw it past the A break" — a weaker signal that
+    used to silently mask a real breakage as a benign blue cell."""
     fa, fb, splices, existing, total_a = _bside_break_setup()
     new = scan_b_side_breaks(fa, fb, splices, existing, total_a)
     assert (7, 0) in new, (

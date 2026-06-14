@@ -744,8 +744,11 @@ if run_clicked:
         n_launch = len(launch_issues)
         n_total  = len(all_results)
 
+        from splicereportmatchexfo import _safe_filename_part
         st.session_state.xlsx_bytes = xlsx_bytes
-        st.session_state.xlsx_name = f"splice_report_{site_a}_{site_b}.xlsx"
+        st.session_state.xlsx_name = (
+            f"splice_report_{_safe_filename_part(site_a, 'A')}_"
+            f"{_safe_filename_part(site_b, 'B')}.xlsx")
         st.session_state.zach_pdf_bytes = zach_bytes
         st.session_state.zach_pdf_name = zach_name
         st.session_state.summary_data = dict(

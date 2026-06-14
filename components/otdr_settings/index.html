@@ -181,6 +181,11 @@ function renderRows() {
     tr.appendChild(td0);
 
     // Apply checkbox
+    // Auto-commit on change — the Apply settings button below is now a
+    // redundant affordance.  See bug #1 fix on 2026-06-13: a tech could
+    // type a Fail value and click Generate without clicking Apply, and
+    // the panel's state would never reach Python because the previous
+    // build sent values to Streamlit only on Apply click.
     const td1 = document.createElement("td");
     td1.className = "apply";
     const cb = document.createElement("input");
@@ -188,12 +193,16 @@ function renderRows() {
     cb.checked = enabled;
     cb.addEventListener("change", () => {
       state[row.key].apply = cb.checked;
+      sendToStreamlit(state);
       renderRows();   // re-render to update enabled/disabled visuals
     });
     td1.appendChild(cb);
     tr.appendChild(td1);
 
-    // Fail input
+    // Fail input — NaN guard: parseFloat("") returns NaN, and any
+    // comparison against NaN is False, which would silently disable the
+    // threshold ("0.16 ≥ NaN" is False).  Skip the state write when the
+    // user is mid-edit and the field briefly empties.
     const td2 = document.createElement("td");
     td2.className = "val " + disClass;
     const f = document.createElement("input");
@@ -201,8 +210,12 @@ function renderRows() {
     f.value = cur.fail;
     f.step = (row.unit === "km") ? 0.0001 : 0.001;
     f.disabled = !enabled;
-    f.addEventListener("input", () => {
-      state[row.key].fail = parseFloat(f.value);
+    f.addEventListener("change", () => {
+      const v = parseFloat(f.value);
+      if (!Number.isNaN(v)) {
+        state[row.key].fail = v;
+        sendToStreamlit(state);
+      }
     });
     td2.appendChild(f);
     const u2 = document.createElement("span");
@@ -211,7 +224,7 @@ function renderRows() {
     td2.appendChild(u2);
     tr.appendChild(td2);
 
-    // Warning input
+    // Warning input — same auto-commit + NaN guard as Fail.
     const td3 = document.createElement("td");
     td3.className = "val " + disClass;
     const w = document.createElement("input");
@@ -219,8 +232,12 @@ function renderRows() {
     w.value = cur.warning;
     w.step = (row.unit === "km") ? 0.0001 : 0.001;
     w.disabled = !enabled;
-    w.addEventListener("input", () => {
-      state[row.key].warning = parseFloat(w.value);
+    w.addEventListener("change", () => {
+      const v = parseFloat(w.value);
+      if (!Number.isNaN(v)) {
+        state[row.key].warning = v;
+        sendToStreamlit(state);
+      }
     });
     td3.appendChild(w);
     const u3 = document.createElement("span");

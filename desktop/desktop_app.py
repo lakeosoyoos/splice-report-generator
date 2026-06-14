@@ -691,7 +691,14 @@ if run:
         for suf in (".zip", ".ZIP"):
             if a_name.endswith(suf): a_name = a_name[:-len(suf)]
             if b_name.endswith(suf): b_name = b_name[:-len(suf)]
-        xlsx_path = os.path.join(out_dir, f"splice_report_{a_name}_to_{b_name}.xlsx")
+        # Sanitize before building the filename — free-text site names
+        # can contain `/ : * ? < > |` which break browser-download
+        # dialogs and Windows file creation.  See bug #4 fix 2026-06-13.
+        from splicereportmatchexfo import _safe_filename_part
+        a_name_safe = _safe_filename_part(a_name, "A")
+        b_name_safe = _safe_filename_part(b_name, "B")
+        xlsx_path = os.path.join(
+            out_dir, f"splice_report_{a_name_safe}_to_{b_name_safe}.xlsx")
 
         with redirect_stdout(log_buf):
             cells, la, lb = build_ribbon_data(
