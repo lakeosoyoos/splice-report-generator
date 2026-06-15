@@ -85,6 +85,7 @@ hiddenimports += [
     "json_reader",
     "acquisition_audit",
     "reburn_summary",
+    "error_reporter",
     "components.otdr_settings",
     # Folder picker — wrapped in try/except in desktop_app.py but Tk and
     # filedialog can be missed by PyInstaller's auto-detection on
@@ -105,6 +106,17 @@ datas += [(os.path.join(REPO_ROOT, "sor_reader324802a.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "json_reader.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "acquisition_audit.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "reburn_summary.py"), ".")]
+datas += [(os.path.join(REPO_ROOT, "error_reporter.py"), ".")]
+# Error-report webhook — CI writes this from the SLACK_ERROR_WEBHOOK secret
+# just before the build.  Bundle ONLY if it exists; absent => reporting OFF.
+# The webhook URL is NEVER in source — the repo is public and Slack
+# auto-revokes leaked webhooks.
+_webhook_cfg = os.path.join(SPEC_DIR, "_webhook.cfg")
+if os.path.exists(_webhook_cfg):
+    datas += [(_webhook_cfg, ".")]
+    print("[spec] bundling _webhook.cfg (error reporting ON)")
+else:
+    print("[spec] no _webhook.cfg present (error reporting OFF)")
 # Custom component (the Streamlit component_v1 declare_component looks
 # for the HTML next to the __init__.py)
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",

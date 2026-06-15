@@ -69,6 +69,7 @@ ENGINE_FILES = [
     "json_reader.py",
     "acquisition_audit.py",
     "reburn_summary.py",
+    "error_reporter.py",
     "components/otdr_settings/__init__.py",
     "components/otdr_settings/index.html",
     "desktop/desktop_app.py",
@@ -118,6 +119,42 @@ def _bundled_dir() -> Path:
         return Path(getattr(sys, "_MEIPASS",
                             os.path.dirname(sys.executable)))
     return Path(__file__).resolve().parent.parent  # repo root in dev
+
+
+def _load_webhook() -> str | None:
+    """Read the build-time error-report webhook (bundled `_webhook.cfg`,
+    written by CI from the SLACK_ERROR_WEBHOOK secret — never in committed
+    source).  Expose it to the engine via ``SS_ERROR_WEBHOOK``.  No-op if
+    absent (dev machine / not configured / build without the secret)."""
+    try:
+        for cand in (_bundled_dir() / "_webhook.cfg",
+                     Path(__file__).resolve().parent / "_webhook.cfg"):
+            if cand.exists():
+                url = cand.read_text().strip()
+                if url:
+                    os.environ["SS_ERROR_WEBHOOK"] = url
+                    return url
+    except Exception:
+        pass
+    return None
+
+
+def _post_slack(text: str) -> None:
+    """Fire-and-forget Slack post for LAUNCHER-side failures (the UI has its
+    own error_reporter.report_error for analysis errors).  Never raises."""
+    url = os.environ.get("SS_ERROR_WEBHOOK")
+    if not url:
+        return
+    try:
+        import json as _json
+        import urllib.request
+        req = urllib.request.Request(
+            url,
+            data=_json.dumps({"text": text}).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=4)
+    except Exception:
+        pass
 
 
 def _fetch(url: str, timeout: int = 15) -> bytes | None:
@@ -223,6 +260,9 @@ def _already_running() -> bool:
 def main() -> int:
     log_path = _redirect_output_to_log()
     _silence_first_run_prompt()
+    # Expose the build-time Slack webhook to the UI before anything else
+    # so report_error works the moment desktop_app.py starts importing.
+    _load_webhook()
 
     if _already_running():
         print("Another instance is already serving — opening new tab.")
@@ -269,6 +309,22 @@ def main() -> int:
         # streamlit CLI calls sys.exit() — propagate the code unchanged.
         code = exc.code if isinstance(exc.code, int) else 0
         return code
+    except BaseException as exc:
+        # FATAL won't-boot path — the silent class that an in-process UI
+        # error_reporter never sees (Streamlit hasn't started).  Post a
+        # short Slack alert with what we know and re-raise so the windowed
+        # exe still dies the way it always did.
+        import platform, traceback
+        try:
+            _post_slack(
+                f":rotating_light: *Splice Report launcher* failed to start\n"
+                f"*{type(exc).__name__}*: {exc}\n"
+                f"host: `{platform.node()}` | os: {platform.platform()} | "
+                f"engine: {os.environ.get('SS_ENGINE_SOURCE','?')}\n"
+                f"```{traceback.format_exc()[-1400:]}```")
+        except Exception:
+            pass
+        raise
 
 
 if __name__ == "__main__":

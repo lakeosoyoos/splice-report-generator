@@ -71,6 +71,7 @@ hiddenimports += [
     "json_reader",
     "acquisition_audit",
     "reburn_summary",
+    "error_reporter",
     "components.otdr_settings",
     "tkinter",
     "tkinter.filedialog",
@@ -86,6 +87,11 @@ datas += [(os.path.join(REPO_ROOT, "sor_reader324802a.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "json_reader.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "acquisition_audit.py"), ".")]
 datas += [(os.path.join(REPO_ROOT, "reburn_summary.py"), ".")]
+datas += [(os.path.join(REPO_ROOT, "error_reporter.py"), ".")]
+# Error-report webhook — see SpliceReport.spec for the policy comment.
+_webhook_cfg = os.path.join(SPEC_DIR, "_webhook.cfg")
+if os.path.exists(_webhook_cfg):
+    datas += [(_webhook_cfg, ".")]
 datas += [(os.path.join(REPO_ROOT, "components", "otdr_settings",
                          "__init__.py"),
             "components/otdr_settings")]

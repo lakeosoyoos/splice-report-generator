@@ -760,6 +760,27 @@ if run_clicked:
         st.session_state.done = True
         prog.progress(1.0, text="Done.")
         prog.empty()
+    except Exception as exc:
+        # Surface the normal red banner, then post a scrubbed alert to Slack
+        # so we hear about tech-side failures in real time.  No-op when
+        # SS_ERROR_WEBHOOK isn't set (e.g. on a dev machine).  Never blocks
+        # or re-raises.
+        st.exception(exc)
+        try:
+            from error_reporter import report_error
+            report_error(
+                "Web Generate Report",
+                exc,
+                context={
+                    "A files": n_a if 'n_a' in dir() else 0,
+                    "B files": n_b if 'n_b' in dir() else 0,
+                    "site_a": site_a if 'site_a' in dir() else "?",
+                    "site_b": site_b if 'site_b' in dir() else "?",
+                },
+            )
+        except Exception:
+            pass
+        st.stop()
     finally:
         _restore_overrides(saved)
 

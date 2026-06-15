@@ -713,6 +713,27 @@ if run:
                         fibers_a=fa, fibers_b=fb,
                         all_results=all_results)
         prog.progress(1.0, text="Done.")
+    except Exception as exc:
+        # Show the tech the normal red banner so they know it failed, then
+        # post a scrubbed alert to Slack so we hear about it in real time
+        # (no PII / no trace data — only counts and format).  Reporting is
+        # a no-op when SS_ERROR_WEBHOOK isn't bundled; never blocks or raises.
+        st.exception(exc)
+        try:
+            from error_reporter import report_error
+            report_error(
+                "Desktop Generate report",
+                exc,
+                context={
+                    "A files": len(inv_a),
+                    "B files": len(inv_b),
+                    "A is zip": _is_zip_path(dir_a),
+                    "B is zip": _is_zip_path(dir_b),
+                },
+            )
+        except Exception:
+            pass
+        st.stop()
     finally:
         _restore_overrides(saved)
         shutil.rmtree(staged_a, ignore_errors=True)

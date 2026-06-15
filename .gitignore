@@ -9,3 +9,9 @@ desktop/.venv-mac/
 desktop/build/
 desktop/dist/
 desktop/__pycache__/
+
+# Slack error-report webhook — written by CI from the SLACK_ERROR_WEBHOOK
+# repo secret, bundled into the .exe at build time, NEVER committed.
+# The repo is public; Slack auto-revokes any webhook URL it finds in source.
+_webhook.cfg
+desktop/_webhook.cfg
